@@ -1,0 +1,19 @@
+{
+  "name": "lotus-learn",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lotus Learn: an AI-assisted Tamil learning platform with a tropical pixel-art, retro-window interface.",
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch-path=server --watch-path=shared server/index.js",
+    "seed": "node --disable-warning=ExperimentalWarning server/scripts/seed.js",
+    "create-admin": "node --disable-warning=ExperimentalWarning server/scripts/create-admin.js",
+    "backup": "node --disable-warning=ExperimentalWarning server/scripts/backup.js",
+    "art": "node tools/build-art.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"tests/unit/*.test.js\" \"tests/integration/*.test.js\"",
+    "test:e2e": "python3 tests/e2e/run_e2e.py",
+    "check": "node tools/check.mjs"
+  }
+}
