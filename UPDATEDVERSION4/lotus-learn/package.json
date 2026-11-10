@@ -1,0 +1,27 @@
+{
+  "name": "lotus-learn",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LotusLearn: Tamil, Malayalam, Kannada and Telugu learning with a free, fully local dictionary (IndicTrans2, Wiktionary, Wikidata, Ollama).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch-path=server --watch-path=shared server/index.js",
+    "seed": "node --disable-warning=ExperimentalWarning server/scripts/seed.js",
+    "create-admin": "node --disable-warning=ExperimentalWarning server/scripts/create-admin.js",
+    "backup": "node --disable-warning=ExperimentalWarning server/scripts/backup.js",
+    "art": "node tools/build-art.mjs",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 \"tests/unit/*.test.js\" \"tests/integration/*.test.js\"",
+    "test:e2e": "python3 tests/e2e/run_e2e.py",
+    "check": "node tools/check.mjs",
+    "dict:plan": "python3 local-dictionary/setup_local_dictionary.py --dry-run",
+    "dict:setup": "python3 local-dictionary/setup_local_dictionary.py",
+    "dict:start": "cd local-dictionary && python3 -m lotus_dict.server",
+    "dict:verify": "cd local-dictionary && python3 verify_local.py",
+    "dict:test": "cd local-dictionary && python3 -m unittest discover -s tests -v",
+    "start:all": "node tools/start-all.mjs"
+  }
+}
