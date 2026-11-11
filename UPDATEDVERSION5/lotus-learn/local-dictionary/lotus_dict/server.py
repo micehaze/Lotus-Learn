@@ -95,8 +95,21 @@ class Service:
             out.update(entries=res["entries"], via=res["via"])
             if res["entries"]:
                 out["sources"].append("lexicon")
+            has_definition = any(s.get("gloss") or s.get("native_definition")
+                                 for e in res["entries"] for s in e["senses"])
+            usage = self.lexicon.usage.lookup(text, lang) if self.lexicon.usage and not has_definition else None
+            if usage:
+                out.update(entries=[], via=None)
+                out["usage"] = usage
+                out["sources"].append("Wikipedia")
             has_english=any(s.get('gloss') for e in res['entries'] for s in e['senses'])
-            if (not has_english or body.get("always_translate")) and not body.get('lexicon_only'):
+            has_native_wiktionary = any(
+                e["source"] == "native-wiktionary" and any(s.get("native_definition") for s in e["senses"])
+                for e in res["entries"]
+            )
+            if (not has_english or body.get("always_translate")) and not body.get('lexicon_only') and (
+                not (usage or has_native_wiktionary) or body.get("always_translate") or body.get("context")
+            ):
                 mt = self._translate(text, lang, "en", 3)
                 out["machine_translation"] = mt
                 if mt.get("candidates"):

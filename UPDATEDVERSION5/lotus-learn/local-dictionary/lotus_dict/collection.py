@@ -5,16 +5,21 @@ from .preferred import PREFERRED
 from .datuk import Datuk
 from .glossary import Glossary
 import re
+from urllib.parse import quote
+
+from .wiki_usage import WikiUsage
 
 
 class DictionaryCollection:
     def __init__(self, home):
         self.lexicons = [Lexicon(home / "lexicon.db")]
-        for name in ("alar.db", "olam.db"):
+        for name in ("alar.db", "olam.db", "native-wiktionary.db"):
             if (home / name).exists():
                 self.lexicons.append(Lexicon(home / name))
         self.datuk=Datuk(home/'datuk.db') if (home/'datuk.db').exists() else None
         self.glossary=Glossary(home/'glossaries.db') if (home/'glossaries.db').exists() else None
+        usage_path = home / "wikipedia-usage.db"
+        self.usage = WikiUsage(usage_path) if usage_path.is_file() else None
 
     def lookup_native(self, word, lang, candidates=()):
         results = [x.lookup_native(word, lang, candidates) for x in self.lexicons]
@@ -24,8 +29,16 @@ class DictionaryCollection:
                 if hits:
                     results.insert(0,{'via':'glossary headword' if form==word else 'morphological analysis','entries':[{'lang':lang,'word':form,'pos':x['pos'],'roman':'','source':'indic-glossaries','senses':[{'gloss':x['native'],'tags':[],'examples':[],'relations':{}}],'relations':{},'provenance':x['provenance']} for x in hits]});break
         if self.datuk: results.append(self.datuk.lookup_native(word,lang,candidates))
+        entries = [e for r in results for e in r["entries"]]
+        for entry in entries:
+            if entry["source"] != "native-wiktionary":
+                continue
+            entry["source_url"] = f"https://{lang}.wiktionary.org/wiki/{quote(entry['word'], safe='')}"
+            for index, sense in enumerate(entry["senses"]):
+                if "native-definition" in sense.get("tags", []):
+                    sense.update(native_definition=sense["gloss"], gloss="", source_record_id=str(index))
         return {"query": word, "lang": lang, "via": next((r["via"] for r in results if r["entries"]), None),
-                "entries": [e for r in results for e in r["entries"]]}
+                "entries": entries}
 
     def lookup_english(self, word, lang, limit=12):
         items = (self.glossary.lookup(word,'en',lang) if self.glossary else []) + [i for x in self.lexicons for i in x.lookup_english(word, lang, limit)]
@@ -91,4 +104,6 @@ class DictionaryCollection:
         if self.datuk:
             out['datuk']=self.datuk.stats();out['native_definitions']=out['datuk']['definitions']
         if self.glossary:out['glossaries']=self.glossary.stats()
+        if self.usage:
+            out["attested_forms"] = self.usage.counts
         return out

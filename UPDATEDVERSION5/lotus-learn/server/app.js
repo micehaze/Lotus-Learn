@@ -129,6 +129,7 @@ export function createApp(overrides = {}, deps = {}) {
   R.get('/api/dictionary/status', async () => {
     const health = await providers.health();
     return { available: !!health.ok, entries: health.lexicon?.entries || {}, sources: health.lexicon?.sources || [],
+      attestedForms: health.lexicon?.attested_forms || {},
       ai: health.llm?.available || false, model: health.llm?.model || '', message: health.error || health.llm?.reason || '',
       translation: health.translator?.available || false };
   }, U);

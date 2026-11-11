@@ -1,4 +1,5 @@
 """Regression coverage for definition search, generation filtering and web attribution."""
+import bz2
 import io
 import json
 import sys
@@ -9,9 +10,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lotus_dict.lexicon import Lexicon
 from lotus_dict.llm import Ollama
 from lotus_dict.web_examples import find_examples
+from lotus_dict.wiki_usage import WikiUsage
+from import_wikipedia_usage import build as build_usage
 
 
 class V5Tests(unittest.TestCase):
+    def test_wikipedia_import_keeps_an_exact_form_with_its_article(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            dump = folder / "test.xml.bz2"
+            dump.write_bytes(bz2.compress("""<mediawiki xmlns="urn:test">
+                <page><title>மலைப் பகுதி</title><ns>0</ns><revision><text>
+                இந்த [[மலைப்பகுதி]] பசுமையான மரங்களாலும் அழகான தோட்டங்களாலும் சூழப்பட்டுள்ளது.
+                {{வார்ப்புருச்சொல்}}
+                </text></revision></page></mediawiki>""".encode("utf-8")))
+            index = folder / "wikipedia-usage.db"
+            build_usage(index, {"ta": dump})
+            usage = WikiUsage(index)
+            try:
+                result = usage.lookup("மலைப்பகுதி", "ta")
+                self.assertIn("மலைப்பகுதி", result["excerpt"])
+                self.assertEqual(result["article"], "மலைப் பகுதி")
+                self.assertTrue(result["url"].startswith("https://ta.wikipedia.org/wiki/"))
+                self.assertIsNone(usage.lookup("மலைப்பகுதி", "te"))
+                self.assertIsNone(usage.lookup("வார்ப்புருச்சொல்", "ta"))
+            finally:
+                usage.db.close()
+
     def test_definition_search_respects_word_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             lex = Lexicon(Path(tmp) / "lex.db")

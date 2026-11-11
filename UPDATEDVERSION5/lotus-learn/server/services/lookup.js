@@ -44,7 +44,10 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
   const entryView = (id, extra = {}) => { const v = vocabulary.get(id, { any: true }); return v ? { ...strip(v), translation: v.english, ...extra } : null; };
 
   // ------------------------------------------------------------ external (local service) lookups
-  const ORIGIN = (basis = '') => (/indic-glossaries/i.test(basis) ? 'indic-glossaries' : /datuk/i.test(basis) ? 'datuk' : /wikidata/i.test(basis) ? 'wikidata' : /alar/i.test(basis) ? 'alar' : /olam/i.test(basis) ? 'olam' : /open-tamil/i.test(basis) ? 'open-tamil' : /ollama/i.test(basis) ? 'local-llm' : /wiktionary|kaikki/i.test(basis) ? 'wiktionary' : /indictrans/i.test(basis) ? 'indictrans2' : 'local');
+  const ORIGIN = (basis = '') => {
+    if (/^native-wiktionary\b/i.test(basis)) return 'native-wiktionary';
+    return /indic-glossaries/i.test(basis) ? 'indic-glossaries' : /datuk/i.test(basis) ? 'datuk' : /wikidata/i.test(basis) ? 'wikidata' : /alar/i.test(basis) ? 'alar' : /olam/i.test(basis) ? 'olam' : /open-tamil/i.test(basis) ? 'open-tamil' : /ollama/i.test(basis) ? 'local-llm' : /wiktionary|kaikki/i.test(basis) ? 'wiktionary' : /indictrans/i.test(basis) ? 'indictrans2' : 'local';
+  };
   const LEXICON_ATTR = 'Wiktionary via Kaikki.org (CC BY-SA 4.0) · Wikidata Lexemes (CC0)';
   const mark = (text, w) => (text.includes(w) ? text.replace(w, `[[${w}]]`) : text);
   const relWords = (s, ...kinds) => kinds.flatMap((k) => (s.relations?.[k] || []).map((r) => ({ native: r.word.replace(/\s*\([^)]*[A-Za-z][^)]*\)\s*$/u, '').trim(), english: '', nuance: r.note || '', context: '' })));
@@ -74,7 +77,8 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
 
   async function fromEnglish(word, lang) {
     const qn = normalizeText(word);
-    const cached = cacheGet(lang, 'from_en', qn, 'expanded-v2');
+    const cacheVersion = ['ta', 'te'].includes(lang) ? 'expanded-v3' : 'expanded-v2';
+    const cached = cacheGet(lang, 'from_en', qn, cacheVersion);
     if (cached?.status === 'ok') return cached.payload.ids.map((id) => entryView(id, { match: { score: 85, type: 'external' } })).filter(Boolean);
     if (!providers.configured()) return [];
     const r = await providers.lookupEnglish(word, lang, { disambiguate: true });
@@ -88,13 +92,14 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
       if (id && c.provenance) storeSourceMetadata(id, [], c.provenance);
     }
     if (!ids.length && r.machine_translation?.error) throw new Error(r.machine_translation.error);
-    if (ids.length) cacheSet(lang, 'from_en', qn, 'expanded-v2', 'ok', { ids, sources: r.sources }, 3650);
+    if (ids.length) cacheSet(lang, 'from_en', qn, cacheVersion, 'ok', { ids, sources: r.sources }, 3650);
     return ids.map((id) => entryView(id, { match: { score: 85, type: 'external' } })).filter(Boolean);
   }
 
   async function toEnglish(word, lang, { context } = {}) {
     const qn = j({word:normalizeText(word),context:normalizeText(context || '').slice(0,400)});
-    const cached = cacheGet(lang, 'to_en', qn, 'expanded-v2');
+    const cacheVersion = ['ta', 'te'].includes(lang) ? 'expanded-v3' : 'expanded-v2';
+    const cached = cacheGet(lang, 'to_en', qn, cacheVersion);
     if (cached?.status === 'ok' && vocabulary.get(cached.payload.id, { any: true })) return cached.payload;
     if (!providers.configured()) return null;
     const lemmas = analyze(word, lang).map((a) => a.lemma);
@@ -105,16 +110,23 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
       const gloss = e.senses.find(s=>s.gloss)?.gloss || r.machine_translation?.candidates?.[0] || '[English translation unavailable]';
       const id = materialize(lang, { native: e.word, english: firstGloss(gloss) || gloss || word, pos: e.pos, definition: e.senses.map((s) => s.gloss).filter(Boolean).join('; ').slice(0, 900), origin: e.source || 'wiktionary',
         alt: e.senses.slice(1).map((s) => firstGloss(s.gloss)).filter(Boolean).slice(0, 5) });
-      if (id) { storeLexicon(id, r.entries, e.word); result = { id, lemma: e.word, provider: e.source || 'wiktionary', attribution: LEXICON_ATTR, via: r.via, formMeaning: r.context_translation?.candidates?.[0] ? `In context: “${r.context_translation.candidates[0]}”` : undefined }; }
+      if (id) {
+        storeLexicon(id, r.entries, e.word);
+        const attribution = e.source === 'native-wiktionary' ? 'Tamil or Telugu Wiktionary (CC BY-SA 4.0)' : LEXICON_ATTR;
+        result = { id, lemma: e.word, provider: e.source || 'wiktionary', attribution, via: r.via,
+          formMeaning: r.context_translation?.candidates?.[0] ? `In context: “${r.context_translation.candidates[0]}”` : undefined };
+      }
     } else if (r.machine_translation?.candidates?.length) {
       const [best, ...rest] = r.machine_translation.candidates;
       const origin = /ollama/i.test(r.machine_translation.engine || '') ? 'local-llm' : 'indictrans2';
       const id = materialize(lang, { native: word, english: best, origin, alt: rest });
       if (id) result = { id, lemma: word, provider: origin, attribution: r.machine_translation.engine, formMeaning: r.context_translation?.candidates?.[0] ? `In context: “${r.context_translation.candidates[0]}”` : undefined };
+    } else if (r.usage) {
+      return { usage: r.usage };
     } else if (r.machine_translation?.error) {
       throw new Error(r.machine_translation.error);
     }
-    if (result && !glossUnavailable(result.id)) cacheSet(lang, 'to_en', qn, 'expanded-v2', 'ok', result, 3650);
+    if (result && !glossUnavailable(result.id)) cacheSet(lang, 'to_en', qn, cacheVersion, 'ok', result, 3650);
     return result;
   }
   const glossUnavailable = (id) => vocabulary.get(id,{any:true})?.english === '[English translation unavailable]';
@@ -150,6 +162,7 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
     let analysis = null;
     let status = 'ok';
     let sourceError = null;
+    let usage = null;
     const strong = results.some((r) => r.match.score >= 80);
     if (!strong && script === lang) {
       const m = resolveForm(raw, lang);
@@ -163,7 +176,14 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
       if (externalConfigured()) {
         try {
           if (wantFromEn) { const ext = await fromEnglish(raw, lang); results = [...results, ...ext.filter((e) => !results.some((r) => r.id === e.id))]; }
-          else if (script === lang || direction === 'to_en') { const r = await toEnglish(raw, lang, { context }); if (r) { const v = entryView(r.id, { match: { score: 85, type: r.lemma !== raw ? 'inflected form' : 'external' }, source: r.provider, attribution: r.attribution }); if (v) results.unshift(v); } }
+          else if (script === lang || direction === 'to_en') {
+            const r = await toEnglish(raw, lang, { context });
+            usage = r?.usage || null;
+            if (r?.id) {
+              const v = entryView(r.id, { match: { score: 85, type: r.lemma !== raw ? 'inflected form' : 'external' }, source: r.provider, attribution: r.attribution });
+              if (v) results.unshift(v);
+            }
+          }
         } catch (e) { status = results.length ? 'ok' : 'unavailable'; sourceError = e.message; }
       }
       if (!results.length && status === 'ok') status = externalConfigured() ? 'not_found' : 'not_found_offline';
@@ -173,8 +193,8 @@ export function createLookupService({ db, clock, meta, vocabulary, dictionary, a
       const a=analyze(raw,lang).find(a=>normalizeText(a.lemma)===normalizeText(selected.native));
       if(a)analysis={form:raw,lemma:selected.native,grammar:a.grammar,description:describe(a.grammar),gloss:composeGloss(a.grammar,selected.english),basis:'rule-based analysis checked against dictionary lemma'};
     }
-    if(results.some(r=>r.english==='[English translation unavailable]'))status='partial';
-    const out = { query: raw, lang: local.lang, dictionary: lang, direction, results, analysis, status, sourceError };
+    if (usage || results.some(r => r.english === '[English translation unavailable]')) status = 'partial';
+    const out = { query: raw, lang: local.lang, dictionary: lang, direction, results, analysis, status, sourceError, usage };
     if (admin) out.diagnostics = { providers: providers.status(), ai: ai.configured, localMatches: local.results.length };
     return out;
   }

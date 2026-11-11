@@ -10,23 +10,23 @@ This is a separate, runnable upgrade of Version 4. Your existing learner databas
 4. Sign in with your existing account, or create one. Development learner: `demo@lotuslearn.local` / `lotus-demo-2026`.
 5. Open **Dictionary**, select Tamil, Malayalam, Kannada or Telugu, and search in English or the language’s script. Switch direction with ⇄.
 
-The launcher starts the dictionary service and website together. It starts Ollama when needed and installed. No `npm install` is required. The dictionary indexes are already included; do not run the heavyweight setup script just to use the app.
+The launcher starts the dictionary service and website together. It starts Ollama when needed and installed. No `npm install` is required. If you cloned this repository from GitHub, follow the dictionary setup below first.
 
 Requirements: Node.js 22.13+, Python 3.10+ with SQLite FTS5, and Ollama for AI features. These were found on this computer. If you move the folder to another computer, install those programs and run `ollama pull gemma3:4b` once. The model is stored in Ollama’s model library, not duplicated in this project.
 
-## What is included
+## Dictionary data on a fresh GitHub checkout
 
-| Language | Indexed source entries |
-|---|---:|
-| Tamil | 13,526 |
-| Malayalam | 141,292 |
-| Kannada | 159,379 |
-| Telugu | 22,926 |
-| Total | 337,123 |
+On a fresh checkout, copy `.env.example` to `.env` and set `PORT=3005`, `PUBLIC_URL=http://localhost:3005`, and `LOCAL_DICT_URL=http://127.0.0.1:8766` to use the ports listed above.
 
-These are dictionary records, including compounds, different parts of speech and etymologies; they are **not** unique-word counts. There are also 361,785 indexed forms and 192,287 English–Malayalam translation records. Counts describe this downloaded snapshot, not all words in each language. Tamil coverage is below 20,000 source entries; unknown words use a labelled local-AI fallback.
+The [Tamil and Telugu dictionary data release](https://github.com/micehaze/Lotus-Learn/releases/tag/v5-dictionary-coverage) supplies the supplemental offline indexes. From this Version 5 folder, create the base Wiktionary index if needed:
 
-Sources: Wiktionary/Kaikki for all four languages; V. Krishna’s Alar for Kannada; Olam for Malayalam. Independently licensed source databases are kept in separate files. See **DATA-SOURCES.md** and `local-dictionary/data/sources/` for attribution, original data and licenses.
+```powershell
+python local-dictionary/setup_local_dictionary.py --skip-models --llm none --no-english --no-lexemes
+```
+
+Download **lotuslearn-v5-tamil-telugu-indexes.zip** from the release and extract its two database files into `local-dictionary/data/` while the app is stopped. Start the app and open **Dictionary**. The coverage panel lists dictionary source records and Wikipedia word forms. The supplemental indexes contain 650,000 spellings from each language's Wikipedia dump, including spellings also found in the dictionary.
+
+See [DATA-SOURCES.md](DATA-SOURCES.md) for source attribution, licenses, and instructions to rebuild the indexes.
 
 ## Dictionary behavior
 
