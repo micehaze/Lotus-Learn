@@ -1,5 +1,5 @@
 // Core client utilities: escaping templates, API, state, router helpers, UI primitives.
-import { transliterate } from '/shared/tamil.js';
+import { transliterateAny as transliterate, LANGUAGES } from '/shared/indic.js';
 
 export class Raw { constructor(s) { this.s = s; } toString() { return this.s; } }
 export const raw = (s) => new Raw(String(s ?? ''));
@@ -40,10 +40,19 @@ export async function api(path, { method = 'GET', body } = {}) {
 export const qs = (o) => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.set(k, v); const s = p.toString(); return s ? `?${s}` : ''; };
 
 // ------------------------------------------------------------------ state
-export const state = { user: null, profile: null, meta: null };
+export const state = { user: null, profile: null, meta: null, get lang() { return this.profile?.activeLanguage || 'ta'; } };
+export const langName = (c = state.lang) => (c === 'hi' ? 'Hindi' : LANGUAGES[c]?.name || c);
+export const langNative = (c = state.lang) => LANGUAGES[c]?.native || '';
 export function applyPrefs() {
   const p = state.profile;
   document.body.classList.toggle('hide-tr', p ? !p.showTransliteration : false);
+  const theme = state.user && p ? p.activeLanguage : '';
+  if ((document.body.dataset.theme || '') !== theme) {
+    document.body.classList.add('theme-switching');
+    setTimeout(() => document.body.classList.remove('theme-switching'), 450);
+    if (theme) document.body.dataset.theme = theme; else delete document.body.dataset.theme;
+  }
+  document.documentElement.dataset.learning = theme || 'ta';
   const sysReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const motion = p?.motion || 'full';
   document.body.classList.toggle('motion-off', motion === 'off');
@@ -72,8 +81,8 @@ export function lotus(stage, size = '') {
   const label = n === 0 ? 'No lotus yet' : n === 5 ? 'Fully bloomed lotus (5 of 5)' : `${n} of 5 lotus rewards`;
   return h`<span class="lotus ${size ? `lotus--${size}` : ''}" style="--frame:${n}" role="img" aria-label="${label}" title="${label}"></span>`;
 }
-export function ta(text, { size = '', tr = true, block = false } = {}) {
-  return h`<span class="ta ${size ? `ta-${size}` : ''}" lang="ta" ${block ? raw('style="display:block"') : ''}>${text}</span>${tr ? h`<span class="tr">${transliterate(text)}</span>` : ''}`;
+export function ta(text, { size = '', tr = true, block = false, lang } = {}) {
+  return h`<span class="ta ${size ? `ta-${size}` : ''}" lang="${lang || state.lang}" ${block ? raw('style="display:block"') : ''}>${text}</span>${tr ? h`<span class="tr">${transliterate(text)}</span>` : ''}`;
 }
 export const level = (code) => (code ? h`<span class="level-badge" title="${state.meta?.levels.find((l) => l.code === code)?.name || code}">${code}</span>` : '');
 export const fmtDate = (d) => (d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
@@ -134,7 +143,7 @@ export function confirmDialog({ title = 'Please confirm', text, confirmLabel = '
 }
 
 /** Save library words (or a custom word) into one of the learner's collections. */
-export async function saveToCollection({ vocabularyIds, word, title = 'Save to collection', source, sourceRef }) {
+export async function saveToCollection({ vocabularyIds, word, title = 'Save to collection', source, sourceRef, onSaved }) {
   let cols;
   try { cols = (await api('/collections')).collections; } catch (e) { toast(e.message, 'bad'); return; }
   modal({
@@ -160,6 +169,7 @@ export async function saveToCollection({ vocabularyIds, word, title = 'Save to c
           const r = await api(`/collections/${cid}/words`, { method: 'POST', body });
           close();
           toast(r.skipped ? `Saved ${r.added} word(s); ${r.skipped} already there.` : 'Saved to collection.');
+          onSaved?.(Number(cid));
         } catch (err) { el.querySelector('[data-err]').innerHTML = String(errorsBox(err)); }
       });
     },

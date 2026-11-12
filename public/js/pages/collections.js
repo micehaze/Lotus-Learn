@@ -1,4 +1,4 @@
-import { h, raw, api, qs, state, win, ta, lotus, level, empty, toast, confirmDialog, modal, errorsBox, formData, go } from '../core.js';
+import { h, raw, api, qs, state, win, ta, lotus, level, empty, toast, confirmDialog, modal, errorsBox, formData, go, langName } from '../core.js';
 import { radar } from '../charts.js';
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -8,14 +8,14 @@ export async function index({ query, navigate }) {
   const sel = await api('/selection');
   return {
     title: 'Collections', scene: 'fern',
-    html: h`<div class="page-head"><div><h1>My collections</h1><p>${plural(d.collections.length, 'collection')} · up to ${d.limit} words each</p></div>
+    html: h`<div class="page-head"><div><h1>My ${langName()} collections</h1><p>${plural(d.collections.length, 'collection')} · up to ${d.limit} words each · other languages keep their own collections</p></div>
       <div class="btn-row"><a class="btn btn--bloom" href="/collections/new">Create collection</a><a class="btn btn--cyan" href="/statistics/collections">Collection statistics</a><a class="btn btn--green" href="/study">Study${sel.count ? ` (${sel.count} selected)` : ''}</a></div></div>
     <div class="stack">
       ${win({ title: 'Search within collections', variant: 'salmon', body: h`<form class="filters" data-search><label class="field" style="flex:3"><span>Word or collection name</span><input type="search" name="q" value="${query.q || ''}" placeholder="வீடு, house, veedu…"></label><button class="btn btn--cyan" type="submit">Search</button>${query.q ? h`<a class="btn btn--ghost" href="/collections">Clear</a>` : ''}</form>
         ${query.q ? (d.matches.length ? h`<ul class="list" style="margin-top:10px">${d.matches.map((m) => h`<li class="spread"><span>${ta(m.tamil, { tr: false })} <span class="muted">${m.english}</span></span><a class="small" href="/collections/${m.collectionId}">${m.collectionTitle}</a></li>`)}</ul>` : h`<p class="muted" style="margin-top:10px">No words match “${query.q}”.</p>`) : ''}` })}
       ${d.collections.length ? h`<div class="cards cards--wide">${d.collections.map((c, i) => win({ title: c.title, variant: ['', 'salmon', 'green', 'coral', 'orange'][i % 5], corner: i === 0 ? 'hibiscus' : undefined, body: h`
           <p class="small muted" style="min-height:1.5em">${c.description}</p>
-          <p class="ta" lang="ta" style="min-height:1.8em">${c.preview.join(' · ')}</p>
+          <p class="ta" lang="${state.lang}" style="min-height:1.8em">${c.preview.join(' · ')}</p>
           <div class="row small"><span>${plural(c.wordCount, 'word')}</span><span class="row" style="gap:2px">${lotus(0, 'sm')}${c.lotus.none}</span><span class="row" style="gap:2px">${lotus(2, 'sm')}${c.lotus.growing}</span><span class="row" style="gap:2px">${lotus(5, 'sm')}${c.lotus.bloomed}</span></div>`,
           foot: h`<a class="btn btn--small btn--ghost" href="/collections/${c.id}/stats">Statistics</a><a class="btn btn--small" href="/collections/${c.id}">Open</a>` }))}</div>`
         : win({ title: 'Start your first collection', corner: 'lotus', body: empty('No collections yet', 'A collection is a personal list of words — for a topic, a story, or the words you keep forgetting.', h`<a class="btn btn--bloom" href="/collections/new">Create collection</a>`) })}
@@ -28,13 +28,13 @@ function wordFields(w = {}) {
   const ex = w.examples?.[0] || {};
   const strip = (s) => String(s || '').replace(/\[\[(.+?)\]\]/g, '$1');
   return h`<div class="grid grid-2" style="gap:0 14px">
-    <label class="field"><span>Tamil word *</span><input class="ta-input" type="text" name="tamil" value="${w.tamil || ''}" required lang="ta"></label>
+    <label class="field"><span>${langName()} word *</span><input class="ta-input" type="text" name="tamil" value="${w.tamil || ''}" required lang="${state.lang}"></label>
     <label class="field"><span>Transliteration</span><input type="text" name="transliteration" value="${w.transliteration || ''}" placeholder="filled in automatically"></label>
     <label class="field"><span>English translation *</span><input type="text" name="english" value="${w.english || ''}" required></label>
     <label class="field"><span>Hindi (optional)</span><input type="text" name="hindi" value="${w.hindi || ''}" lang="hi"></label>
     <label class="field"><span>Malayalam (optional)</span><input type="text" name="malayalam" value="${w.malayalam || ''}" lang="ml"></label>
     <label class="field"><span>Synonyms</span><input class="ta-input" type="text" name="synonyms" value="${(w.synonyms || []).join(', ')}" placeholder="comma separated"></label>
-    <label class="field"><span>Example sentence (Tamil)</span><input class="ta-input" type="text" name="exampleTa" value="${strip(ex.ta)}" lang="ta"></label>
+    <label class="field"><span>Example sentence (${langName()})</span><input class="ta-input" type="text" name="exampleTa" value="${strip(ex.ta)}" lang="${state.lang}"></label>
     <label class="field"><span>Example translation</span><input type="text" name="exampleEn" value="${ex.en || ''}"></label></div>
     <label class="field"><span>Collocations</span><textarea class="ta-input" name="collocations" placeholder="one per line: தண்ணீர் குடி — drink water">${(w.collocations || []).map((c) => `${strip(c.ta)}${c.en ? ` — ${c.en}` : ''}`).join('\n')}</textarea><small>Used for collocation exercises when the word appears in the phrase.</small></label>`;
 }
@@ -156,7 +156,7 @@ export async function stats({ params, query }) {
         ${pages > 1 ? h`<div class="spread">${page > 1 ? h`<a class="btn btn--small btn--ghost" href="${link({ page: page - 1 })}">Previous words</a>` : h`<span></span>`}<span class="small">Page ${page} of ${pages}</span>${page < pages ? h`<a class="btn btn--small btn--ghost" href="${link({ page: page + 1 })}">Next words</a>` : h`<span></span>`}</div>` : ''}` })}
       <div class="stack">
         ${win({ title: 'Summary', variant: 'green', body: h`<div class="statgrid"><div class="stat"><b>${sum.totalWords}</b><span>total words</span></div><div class="stat"><b>${sum.withoutLotus}</b><span>without lotus</span></div><div class="stat"><b>${sum.growing}</b><span>with 1–4 lotuses</span></div><div class="stat"><b>${sum.bloomed}</b><span>fully bloomed</span></div><div class="stat"><b>${sum.averageMastery}</b><span>average mastery</span></div></div>` })}
-        ${win({ title: 'Words', body: h`<div class="table-wrap" style="max-height:420px"><table class="tbl"><tr><th>Word</th><th>Lotus</th><th>Score</th><th>✓/✗</th></tr>${s.words.map((w) => h`<tr><td><span class="ta" lang="ta">${w.tamil}</span><br><span class="small muted">${w.english}</span></td><td>${lotus(w.lotus, 'sm')}</td><td>${w.score}</td><td class="small">${w.totalCorrect}/${w.totalIncorrect}</td></tr>`)}</table></div>` })}
+        ${win({ title: 'Words', body: h`<div class="table-wrap" style="max-height:420px"><table class="tbl"><tr><th>Word</th><th>Lotus</th><th>Score</th><th>✓/✗</th></tr>${s.words.map((w) => h`<tr><td><span class="ta" lang="${state.lang}">${w.tamil}</span><br><span class="small muted">${w.english}</span></td><td>${lotus(w.lotus, 'sm')}</td><td>${w.score}</td><td class="small">${w.totalCorrect}/${w.totalIncorrect}</td></tr>`)}</table></div>` })}
       </div></div>`,
   };
 }
@@ -187,14 +187,14 @@ export async function study({ query, navigate }) {
   const open = openId ? await api(`/collections/${openId}`) : null;
   return {
     title: 'Study', scene: 'cascade', keepScroll: true,
-    html: h`<div class="page-head"><div><h1>Choose words to study</h1><p>Pick 1–${sel.max} words from any collections. Each word needs 10 correct answers.</p></div></div>
+    html: h`<div class="page-head"><div><h1>Choose ${langName()} words to study</h1><p>Pick 1–${sel.max} words from any ${langName()} collections. Each word needs 10 correct answers.</p></div></div>
     ${active.session ? h`<div class="notice">You have a lesson in progress (${active.session.correct}/${active.session.required} correct). <a class="btn btn--small" href="/learn/${active.session.id}">Resume lesson</a></div>` : ''}
     <div class="split">
       <div class="stack">
         ${win({ title: 'Collections', variant: 'green', body: list.collections.length ? h`<ul class="list">${list.collections.map((c) => h`<li><a href="/study?c=${c.id}" ${c.id === openId ? raw('aria-current="true" style="font-weight:700"') : ''}>${c.title}</a> <span class="small muted">${c.wordCount}</span></li>`)}</ul>` : empty('No collections', 'Create one first.', h`<a class="btn" href="/collections/new">Create collection</a>`) })}
         ${win({ title: `Selected: ${sel.count} / ${sel.max}`, variant: 'salmon', corner: 'lotus', id: 'preview', body: sel.count ? h`
           <dl class="kv"><dt>Selected words</dt><dd>${sel.count}</dd><dt>Expected questions</dt><dd>${sel.expectedQuestions}</dd></dl>
-          <ul class="list" style="max-height:300px;overflow:auto;margin-top:8px">${sel.items.map((w) => h`<li class="spread"><span><span class="ta" lang="ta">${w.tamil}</span> <span class="small muted">${w.collectionTitle}</span></span><button class="btn btn--small btn--ghost" type="button" data-unsel="${w.id}" aria-label="Remove ${w.english}">×</button></li>`)}</ul>`
+          <ul class="list" style="max-height:300px;overflow:auto;margin-top:8px">${sel.items.map((w) => h`<li class="spread"><span><span class="ta" lang="${state.lang}">${w.tamil}</span> <span class="small muted">${w.collectionTitle}</span></span><button class="btn btn--small btn--ghost" type="button" data-unsel="${w.id}" aria-label="Remove ${w.english}">×</button></li>`)}</ul>`
           : h`<p class="muted">Tap word cards to select them. Your selection is kept while you move between collections.</p>`,
           foot: h`<button class="btn btn--ghost btn--small" type="button" data-clear ${sel.count ? '' : raw('disabled')}>Clear selection</button><button class="btn btn--bloom" type="button" data-start ${sel.count && !active.session ? '' : raw('disabled')}>Start learning</button>` })}
       </div>

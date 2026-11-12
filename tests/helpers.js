@@ -1,9 +1,10 @@
 import { createApp } from '../server/app.js';
+import { createDictionaryProviders } from '../server/integrations/dictionaryProviders.js';
 import { seed } from '../server/seed/seed.js';
 import { mulberry32 } from '../server/util.js';
 
 export async function startTestServer({ seedData = true, deps = {}, overrides = {} } = {}) {
-  const app = createApp({ databaseFile: ':memory:', automationEnabled: false, testMode: true, authRateLimit: 1000, ...overrides }, { rand: mulberry32(42), logger: { log() {}, warn() {}, error: console.error }, ...deps });
+  const app = createApp({ databaseFile: ':memory:', automationEnabled: false, dailyTopicEnabled:false, ai:{provider:'none'}, testMode: true, authRateLimit: 1000, ...overrides }, { rand: mulberry32(42), logger: { log() {}, warn() {}, error: console.error }, providers: createDictionaryProviders({ LOCAL_DICT_ENABLED: 'false' }), ...deps });
   if (seedData) await seed(app, { demoUsers: false });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.server.address().port}`;

@@ -35,11 +35,11 @@ export function createStatsService({ db, clock, collections }) {
     return { collection: { id: c.id, title: c.title }, summary: summarize(words), words };
   }
 
-  function globalStats(userId) {
+  function globalStats(userId, lang = 'ta') {
     const rows = db.all(`SELECT c.id, c.title, cw.word_key, m.successful_days, m.current_correct
       FROM collections c LEFT JOIN collection_words cw ON cw.collection_id = c.id
       LEFT JOIN word_mastery m ON m.user_id = c.user_id AND m.word_key = cw.word_key
-      WHERE c.user_id = ? ORDER BY c.title`, userId);
+      WHERE c.user_id = ? AND c.lang = ? ORDER BY c.title`, userId, lang);
     const byC = new Map();
     const uniqueWords = new Map();
     for (const r of rows) {
@@ -67,10 +67,10 @@ export function createStatsService({ db, clock, collections }) {
     };
   }
 
-  function overview(userId) {
+  function overview(userId, lang = 'ta') {
     const tz = tzOf(userId);
     const today = localDate(clock.now(), tz);
-    const answers = db.all('SELECT answered_at, is_correct, question_type FROM learning_answers WHERE user_id = ? ORDER BY answered_at', userId);
+    const answers = db.all('SELECT a.answered_at, a.is_correct, a.question_type FROM learning_answers a JOIN learning_sessions s ON s.id = a.session_id WHERE a.user_id = ? AND s.lang = ? ORDER BY a.answered_at', userId, lang);
     const days = new Map();
     const byType = {};
     for (const a of answers) {
@@ -85,15 +85,15 @@ export function createStatsService({ db, clock, collections }) {
     const streak = computeStreak(activeDates, today);
     const last30 = [];
     for (let i = 29; i >= 0; i--) { const d = addDays(today, -i); last30.push(days.get(d) || { date: d, correct: 0, incorrect: 0 }); }
-    const rewards = db.all('SELECT reward_date, COUNT(*) AS n FROM lotus_rewards WHERE user_id = ? GROUP BY reward_date', userId);
+    const rewards = db.all('SELECT reward_date, COUNT(*) AS n FROM lotus_rewards WHERE user_id = ? AND lang = ? GROUP BY reward_date', userId, lang);
     const rewardsByDate = Object.fromEntries(rewards.map((r) => [r.reward_date, r.n]));
     last30.forEach((d) => { d.lotuses = rewardsByDate[d.date] || 0; });
-    const sessions = db.get("SELECT COUNT(*) AS total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM learning_sessions WHERE user_id = ?", userId);
-    const mastery = db.all('SELECT successful_days FROM word_mastery WHERE user_id = ?', userId);
+    const sessions = db.get("SELECT COUNT(*) AS total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM learning_sessions WHERE user_id = ? AND lang = ?", userId, lang);
+    const mastery = db.all('SELECT successful_days FROM word_mastery WHERE user_id = ? AND lang = ?', userId, lang);
     const correct = answers.filter((a) => a.is_correct).length;
     const todayRow = days.get(today) || { correct: 0, incorrect: 0 };
     return {
-      today, streak,
+      lang, today, streak,
       totals: {
         answers: answers.length, correct, accuracy: answers.length ? Math.round((correct / answers.length) * 100) : 0,
         sessions: sessions.total || 0, completedSessions: sessions.completed || 0,

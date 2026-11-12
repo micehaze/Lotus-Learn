@@ -10,17 +10,26 @@ export function openDatabase(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
-  migrate(db);
+  migrate(db, file);
   return wrap(db);
 }
 
-export function migrate(db) {
+export function migrate(db, file = ':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
   const applied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map((r) => r.version));
   const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
   for (const f of files) {
     if (applied.has(f)) continue;
+    // Structural migration on a database that already holds data: take a consistent backup first.
+    if (applied.size && file !== ':memory:') {
+      const dir = path.join(path.dirname(file), 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, `pre-${f.replace('.sql', '')}-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+      db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+      console.log(`[migrate] backup written to ${target}`);
+    }
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8');
+    db.exec('PRAGMA foreign_keys = OFF'); // allow the content_jobs table rebuild
     db.exec('BEGIN');
     try {
       db.exec(sql);
@@ -29,6 +38,8 @@ export function migrate(db) {
     } catch (e) {
       db.exec('ROLLBACK');
       throw new Error(`Migration ${f} failed: ${e.message}`);
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }

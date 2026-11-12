@@ -1,4 +1,4 @@
-import { h, api, state, applyPrefs, win, ta, errorsBox, formData, toast, raw } from '../core.js';
+import { h, api, state, applyPrefs, win, ta, errorsBox, formData, toast, raw, langName } from '../core.js';
 import { refreshMe, renderShell } from '../app.js';
 
 export async function landing() {
@@ -10,7 +10,7 @@ export async function landing() {
       <div>
         <h1 class="hero__logo">Lotus<br>Learn</h1>
         <p class="hero__ta" lang="ta">தமிழ் கற்போம்</p>
-        <p class="hero__lead">Collect Tamil words, practise each one until it sticks, and watch a lotus grow on every card. Read stories, watch videos and look words up in English, Hindi or Malayalam.</p>
+        <p class="hero__lead">Learn Tamil, Malayalam, Kannada or Telugu — each with its own progress, dictionary, grammar, stories and notebook. Practise every word until it sticks and watch a lotus grow on its card.</p>
         <div class="btn-row"><a class="btn btn--big btn--bloom" href="/register">Start learning</a><a class="btn btn--big btn--ghost" href="/login">I have an account</a></div>
       </div>
       <div class="stack">
@@ -23,7 +23,7 @@ export async function landing() {
     <div class="grid grid-3" style="margin-top:28px">
       ${win({ title: 'Your own collections', body: h`<p>Build word lists from the library, stories, videos or your own notes. Up to ${state.meta?.limits.collectionWordLimit || 1000} words each.</p>` })}
       ${win({ title: 'Stories & videos', variant: 'orange', body: h`<p>${show.counts.stories} Tamil stories with tap-to-translate words${show.counts.videos ? h`, and ${show.counts.videos} curated videos` : ''}. Spoken and formal Tamil are labelled.</p>` })}
-      ${win({ title: 'Three-way dictionary', variant: 'coral', body: h`<p>Find Tamil words from English, Hindi or Malayalam — or type Tamil in Latin letters like “thanneer”.</p>` })}
+      ${win({ title: 'Four languages, one place', variant: 'coral', body: h`<p>${show.perLanguage.map((l) => h`<span class="ta" lang="${l.code}">${l.native}</span> ${l.words} words · `)}switch at any time without losing progress.</p>` })}
     </div>`,
   };
 }
@@ -102,7 +102,10 @@ export async function onboarding({ navigate }) {
     title: 'Welcome', scene: 'cascade',
     html: h`<div style="max-width:860px;margin:0 auto">${win({ title: `Welcome, ${p.displayName}`, variant: 'salmon', corner: 'lotus', cornerBr: true, body: h`
       <form data-onb>
-        <h2>How much Tamil do you know?</h2>
+        ${state.profile.languages && !Object.values(state.profile.languages).some((x) => x.onboarded) ? h`<h2>Which language would you like to learn first?</h2>
+        <div class="row" role="radiogroup" aria-label="Learning language" style="margin-bottom:14px">${state.meta.languages.map((l) => h`<label class="chip" style="font-size:1rem"><input type="radio" name="lang" value="${l.code}" ${l.code === state.lang ? raw('checked') : ''}><span lang="${l.code}">${l.native}</span> · ${l.name}</label>`)}</div>
+        <p class="small muted">You can add the other languages later; each keeps its own level and progress.</p>` : h`<input type="hidden" name="lang" value="${state.lang}">`}
+        <h2>How much ${langName()} do you know?</h2>
         <div class="cards cards--wide" role="radiogroup" aria-label="Proficiency level">
           ${m.levels.map((l) => h`<label class="wcard" style="cursor:pointer;min-height:auto"><span class="row"><input type="radio" name="level" value="${l.code}" ${l.code === p.level ? raw('checked') : ''}> <strong>${l.code} · ${l.name}</strong></span><span class="small muted">${l.description}</span></label>`)}
         </div>
@@ -124,7 +127,9 @@ export async function onboarding({ navigate }) {
         e.preventDefault();
         const fd = new FormData(e.target);
         try {
-          state.profile = await api('/profile', { method: 'PATCH', body: { level: fd.get('level'), preferredTopics: fd.getAll('topics'), motion: fd.get('motion'), timezone: tz, onboarded: true } });
+          const lang = fd.get('lang') || state.lang;
+          if (lang !== state.lang) state.profile = await api('/profile/language', { method: 'PUT', body: { lang } });
+          state.profile = await api('/profile', { method: 'PATCH', body: { lang, level: fd.get('level'), preferredTopics: fd.getAll('topics'), motion: fd.get('motion'), timezone: tz, onboarded: true } });
           applyPrefs(); renderShell(); navigate('/home', { replace: true });
         } catch (err) { root.querySelector('[data-err]').innerHTML = String(errorsBox(err)); }
       });

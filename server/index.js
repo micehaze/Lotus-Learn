@@ -10,8 +10,8 @@ const { createApp } = await import('./app.js');
 const { seed } = await import('./seed/seed.js');
 
 const app = createApp();
-const levels = app.db.get('SELECT COUNT(*) AS n FROM levels').n;
-if (!levels || process.argv.includes('--seed')) await seed(app, { demoUsers: app.config.seedDemoUser, log: console.log });
+// The seed is idempotent and also upgrades existing databases (new languages, grammar, longer stories).
+await seed(app, { demoUsers: app.config.seedDemoUser, log: console.log });
 app.server.listen(app.config.port, app.config.host, () => {
   console.log(`\n  🪷  Lotus Learn is running at http://localhost:${app.config.port}\n`);
   console.log(`  AI provider: ${app.services.content.automationStatus().ai.configured ? app.services.content.automationStatus().ai.provider : 'not configured (core learning works without it)'}`);

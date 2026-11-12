@@ -10,7 +10,7 @@ SHOTS = ROOT / 'tests' / 'e2e' / 'screenshots'; SHOTS.mkdir(parents=True, exist_
 DB = os.path.join(tempfile.mkdtemp(), 'e2e.db')
 PORT = os.environ.get('E2E_PORT', '3999')
 BASE = f'http://127.0.0.1:{PORT}'
-env = dict(os.environ, DATABASE_FILE=DB, PORT=PORT, HOST='127.0.0.1', AUTOMATION_ENABLED='false', SEED_DEMO_USER='true', PUBLIC_URL=BASE)
+env = dict(os.environ, LOCAL_DICT_ENABLED='false', DATABASE_FILE=DB, PORT=PORT, HOST='127.0.0.1', AUTOMATION_ENABLED='false', DAILY_TOPIC_ENABLED='false', SEED_DEMO_USER='true', PUBLIC_URL=BASE)
 server = subprocess.Popen(['node', '--disable-warning=ExperimentalWarning', 'server/index.js'], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 errors, steps = [], []
 def step(name): steps.append(name); print('  ✓', name, flush=True)
@@ -39,19 +39,20 @@ try:
         page.click('button[type=submit]'); page.wait_for_url('**/onboarding'); page.wait_for_selector('input[name=level]')
         shot(page, '02-onboarding')
         page.check('input[name=level][value=A1]'); page.click('label.chip:has-text("Nature")'); page.click('label.chip:has-text("Food and cooking")')
-        page.click('text=Start learning'); page.wait_for_url('**/home'); page.wait_for_selector('text=Daily words'); page.wait_for_timeout(600)
-        shot(page, '03-home'); step('registration, onboarding, logged-in home')
+        page.click('text=Start learning'); page.wait_for_url('**/home'); page.wait_for_selector('text=Daily Topic'); page.wait_for_timeout(1200)
+        assert page.evaluate("document.body.dataset.theme") == 'ta', 'Tamil theme applied after sign-in'
+        shot(page, '03-home-tamil-theme'); step('registration, onboarding, logged-in home')
 
         page.click('nav >> text=Vocabulary'); page.wait_for_selector('.wcard'); page.wait_for_timeout(500); shot(page, '04-vocabulary')
         page.locator('[data-save]').first.click(); page.wait_for_selector('.modal'); page.fill('input[name=title]', 'E2E words'); page.click('.modal button[type=submit]')
         page.wait_for_selector('.toast'); step('vocabulary browse + save to new collection')
 
-        page.goto(BASE + '/dictionary?q=thanneer'); page.wait_for_selector('text=transliteration'); page.wait_for_timeout(500); shot(page, '05-dictionary-translit')
+        page.goto(BASE + '/dictionary?q=thanneer&direction=to_en'); page.wait_for_selector('text=transliteration'); page.wait_for_timeout(500); shot(page, '05-dictionary-translit')
         page.locator('.win__foot [data-save]').first.click(); page.wait_for_selector('.modal select'); page.click('.modal button[type=submit]'); page.wait_for_selector('.toast')
         page.goto(BASE + '/dictionary?q=' + 'पानी'); page.wait_for_selector('text=exact Hindi')
-        page.goto(BASE + '/dictionary?q=' + 'വെള്ളം'); page.wait_for_selector('text=exact Malayalam')
+        page.goto(BASE + '/dictionary?q=' + 'വെള്ളം'); page.wait_for_selector('text=Malayalam equivalent')
         page.goto(BASE + '/dictionary?q=watr'); page.wait_for_selector('text=fuzzy English')
-        page.goto(BASE + '/dictionary?q=zzqqxx'); page.wait_for_selector('text=No verified entry found'); step('dictionary: transliteration, Hindi, Malayalam, fuzzy, not-found')
+        page.goto(BASE + '/dictionary?q=zzqqxx'); page.wait_for_selector('text=No translation found'); step('dictionary: transliteration, Hindi, Malayalam, fuzzy, not-found')
 
         page.click('nav >> text=Collections'); page.wait_for_selector('text=E2E words'); page.click('a.btn:has-text("Open")')
         page.wait_for_selector('[data-addword]'); page.click('[data-addword]')
@@ -92,19 +93,57 @@ try:
         shot(page, '15-reader-lookup'); page.keyboard.press('Escape')
         page.check('[data-tog=en]'); expect(page.locator('.para-en').first).to_be_visible(); step('reader with lookups and translation toggle')
 
-        page.click('nav >> text=Videos'); page.wait_for_selector('text=The video shelf is empty'); shot(page, '16-videos-empty'); step('video library empty state')
+        page.click('nav >> text=Videos'); page.wait_for_selector('text=video shelf is empty'); shot(page, '16-videos-empty'); step('video library empty state')
         page.click('nav >> text=Profile'); page.wait_for_selector('text=Profile picture'); shot(page, '17-profile')
+
+        # ---------------- multilingual: Daily Topic, grammar, notes, live updates, four themes
+        page.click('nav >> text=Daily Topic'); page.wait_for_selector('text=Today’s topic is being prepared'); shot(page, '25-daily-topic')
+        page.get_by_role('link', name='Topic archive').click(); page.wait_for_selector('.daily-calendar')
+        expect(page.get_by_text('No topics match.')).to_be_visible()
+        page.click('nav >> text=Grammar'); page.wait_for_selector('text=Categories'); page.locator('a.wcard').first.click(); page.wait_for_selector('text=Rule'); page.wait_for_timeout(600); shot(page, '26-grammar-lesson')
+        page.click('[data-bm]'); page.wait_for_selector('text=★ Bookmarked')
+        page.click('nav >> text=Learning Notes'); page.wait_for_selector('.cal'); page.click('[data-new]')
+        page.fill('.note-card [name=title]', 'Dative case'); page.fill('.note-card [name=body]', 'எனக்குத் தண்ணீர் வேண்டும் — **I want water**')
+        [page.wait_for_timeout(250) for _ in range(40) if not page.text_content('.note-card .save-state').startswith('Saved ')]
+        assert page.text_content('.note-card .save-state').startswith('Saved '), 'note autosaved'; page.wait_for_timeout(400); shot(page, '27-notes-calendar')
+        page.reload(); page.wait_for_selector('.note-card [name=body]'); assert 'தண்ணீர்' in page.input_value('.note-card [name=body]'), 'note persists after reload'
+        step('Daily Topic, grammar lesson + bookmark, Learning Notes autosave + persistence')
+        # live update: keep the learner on Grammar, publish a lesson from an admin session
+        page.click('nav >> text=Grammar'); page.wait_for_selector('text=Categories'); page.wait_for_timeout(800)
+        actx = browser.new_context(); ap = actx.new_page(); ap.goto(BASE + '/login')
+        ap.fill('input[name=email]', 'admin@lotuslearn.local'); ap.fill('input[name=password]', 'lotus-admin-2026'); ap.click('button[type=submit]'); ap.wait_for_url('**/home')
+        r = ap.evaluate('''async () => { const h = {'content-type':'application/json','x-requested-with':'lotus'};
+          const c = await fetch('/api/admin/grammar', {method:'POST', headers:h, body: JSON.stringify({lang:'ta', category:'pronouns', level:'A1', title:'Live update test: நீ and நீங்கள்', rule:'நீ is informal you; நீங்கள் is respectful or plural you.', examples:[{native:'நீ எங்கே போகிறாய்?', en:'Where are you going? (informal)'},{native:'நீங்கள் எங்கே போகிறீர்கள்?', en:'Where are you going? (respectful)'}]})}).then(r=>r.json());
+          await fetch('/api/admin/grammar/'+c.id+'/status', {method:'POST', headers:h, body: JSON.stringify({status:'published'})}); return c.id; }''')
+        page.wait_for_selector('text=Live update test', timeout=8000)
+        step('new content appears in an open tab without a manual refresh (server-sent events)')
+        actx.close()
+        themes = {}
+        for code, name in [('ml', 'Malayalam'), ('kn', 'Kannada'), ('te', 'Telugu')]:
+            page.click(f'[data-lang={code}]'); page.wait_for_url('**/onboarding')
+            page.check('input[name=level][value=A2]'); page.click('[data-onb] button[type=submit]'); page.wait_for_url('**/home'); page.wait_for_selector('text=Daily Topic')
+            page.wait_for_timeout(1500)
+            assert page.evaluate('document.body.dataset.theme') == code
+            assert page.locator('#scene.scene--live canvas').count() == 1, f'{name} scene animates'
+            themes[code] = page.evaluate('getComputedStyle(document.body).getPropertyValue("--salmon").trim()')
+            shot(page, f'28-home-{code}-theme')
+        page.click('nav >> text=Dictionary'); page.fill('[data-dict] input[name=q]', 'water'); page.click('[data-dict] button[type=submit]'); page.wait_for_selector('text=In other languages'); page.wait_for_timeout(600); shot(page, '29-dictionary-telugu')
+        page.click('nav >> text=Collections'); page.wait_for_selector('text=My Telugu collections'); assert page.locator('text=E2E words').count() == 0, 'Tamil collection hidden in Telugu'
+        page.click('[data-lang=ml]'); page.goto(BASE + '/reading'); page.wait_for_selector('text=Malayalam reading library'); page.wait_for_timeout(900); shot(page, '30-reading-malayalam')
+        page.click('[data-lang=ta]'); page.wait_for_timeout(500); page.goto(BASE + '/collections'); page.wait_for_selector('text=E2E words')
+        assert len(set(themes.values())) == 3, 'each language has distinct theme tokens'
+        step('four themes (Tamil, Malayalam, Kannada, Telugu), per-language onboarding, collection isolation, Tamil data intact after switching')
         page.click('nav >> text=Settings'); page.check('input[name=motion][value=off]'); page.click('text=Save interface settings'); page.wait_for_selector('.toast')
-        page.goto(BASE + '/home'); page.wait_for_selector('text=Daily words'); page.wait_for_timeout(500)
+        page.goto(BASE + '/home'); page.wait_for_selector('text=Daily Topic'); page.wait_for_timeout(500)
         assert page.locator('#scene.scene--still').count() == 1, 'motion off must show the static scene'
         step('settings: animation switched off -> static scenery')
 
         # mobile
         m = browser.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
         m.add_cookies(ctx.cookies()); mp = m.new_page(); mp.on('pageerror', lambda e: errors.append(f'mobile pageerror: {e}'))
-        mp.goto(BASE + '/home'); mp.wait_for_selector('text=Daily words'); mp.wait_for_timeout(400); shot(mp, '18-mobile-home')
+        mp.goto(BASE + '/home'); mp.wait_for_selector('.win__title >> text=Daily Topic'); mp.wait_for_timeout(400); shot(mp, '18-mobile-home')
         mp.click('[data-menu]'); mp.wait_for_selector('.navbar.open'); shot(mp, '19-mobile-menu')
-        mp.goto(BASE + '/dictionary?q=house'); mp.wait_for_selector('text=exact English'); shot(mp, '20-mobile-dictionary')
+        mp.goto(BASE + '/dictionary?q=house&direction=from_en'); mp.wait_for_selector('text=exact English'); shot(mp, '20-mobile-dictionary')
         overflow = mp.evaluate('document.documentElement.scrollWidth > innerWidth + 1'); assert not overflow, 'no horizontal page overflow on mobile'
         tablet = browser.new_context(viewport={'width': 820, 'height': 1180}); tablet.add_cookies(ctx.cookies()); tp = tablet.new_page()
         tp.goto(BASE + '/collections'); tp.wait_for_selector('text=E2E words'); shot(tp, '21-tablet-collections')

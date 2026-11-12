@@ -76,7 +76,9 @@ export function romanKey(s) {
 }
 
 export function normalizeText(s) {
-  return String(s || '').normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
+  let text=String(s || '').normalize('NFC');
+  for (const [old,modern] of [['ണ്\u200d','ൺ'],['ന്\u200d','ൻ'],['ര്\u200d','ർ'],['ല്\u200d','ൽ'],['ള്\u200d','ൾ'],['ക്\u200d','ൿ']]) text=text.replaceAll(old,modern);
+  return text.replace(/[\u200c\u200d]/g,'').trim().toLowerCase().replace(/\s+/g,' ');
 }
 
 export function levenshtein(a, b, max = Infinity) {
@@ -99,7 +101,8 @@ export function levenshtein(a, b, max = Infinity) {
 
 /** Split Tamil prose into tokens, keeping punctuation/spaces as separate tokens. */
 export function tokenize(text) {
-  return String(text || '').normalize('NFC').match(/[\u0B80-\u0BFF]+|[A-Za-z']+|\s+|[^\s\u0B80-\u0BFFA-Za-z']/g) || [];
+  // all four South Indian scripts (Tamil, Telugu, Kannada, Malayalam) + ZWJ/ZWNJ
+  return String(text || '').normalize('NFC').match(/[\u0B80-\u0BFF\u0C00-\u0D7F\u200C\u200D]+|[A-Za-z']+|\s+|[^\s\u0B80-\u0BFF\u0C00-\u0D7FA-Za-z']/g) || [];
 }
 
 /** Replace [[target]] markers with a blank (for exercises) or strip them (for display). */

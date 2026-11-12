@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = [];
-const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { if (['node_modules', 'data', '.git', 'screenshots'].includes(f.name)) continue; const p = path.join(d, f.name); if (f.isDirectory()) walk(p); else if (/\.(m?js)$/.test(f.name)) files.push(p); } };
+const walk = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { if (['node_modules', 'data', '.git', 'screenshots', '.venv', 'runtime', 'vendor', '__pycache__'].includes(f.name)) continue; const p = path.join(d, f.name); if (f.isDirectory()) walk(p); else if (/\.(m?js)$/.test(f.name)) files.push(p); } };
 walk(ROOT);
 let problems = 0;
 for (const f of files) {

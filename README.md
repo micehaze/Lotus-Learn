@@ -1,79 +1,93 @@
-# Lotus Learn 🪷
+# Lotus Learn Version 5
 
-An AI-assisted Tamil learning web application: vocabulary collections, a ten-correct-answer learning engine, lotus mastery, statistics, a multilingual dictionary (English / Hindi / Malayalam → Tamil), a reading library, a video library and an admin dashboard for AI content automation, presented as a living tropical pixel-art world with retro-Windows frames.
+Lotus Learn is a local language-learning app for **Tamil, Malayalam, Kannada, and Telugu**. Choose a language and level, look up words, practice saved vocabulary, and track your progress in each language.
 
-## Run it locally
+Version 5 runs from the root of the `main` branch. The previous GitHub layout and older versions are available in the [obsolete version archive](https://github.com/micehaze/Lotus-Learn/tree/archive-pre-v5-layout).
 
-**Requirement:** Node.js **22.13 or newer** (it uses Node's built-in SQLite). Nothing else: there are **no npm dependencies to install**.
+## Download and start
 
-```bash
-cd lotus-learn
-cp .env.example .env      # optional – the defaults work
-npm start                 # or: node --disable-warning=ExperimentalWarning server/index.js
+Install [Node.js 22.13 or later](https://nodejs.org/en/download) and [Python 3.10 or later](https://www.python.org/downloads/) and add them to PATH. Install [Ollama](https://ollama.com/download) for AI features. Use [Code → Download ZIP](https://github.com/micehaze/Lotus-Learn/archive/refs/heads/main.zip) and extract it, or clone the project.
+
+```powershell
+git clone https://github.com/micehaze/Lotus-Learn.git
+Set-Location Lotus-Learn
 ```
 
-Open **http://localhost:3000**.
+From the extracted or cloned app folder, copy the settings and build the base offline dictionary. This step downloads data once.
 
-On first start the database (`data/lotus.db`) is created, migrated and seeded with levels, 28 topics, 52 vocabulary entries, 5 vocabulary lists and 3 original stories, plus two **development** accounts:
-
-| Role | Email | Password |
-| --- | --- | --- |
-| Learner (with 3 sample collections) | demo@lotuslearn.local | lotus-demo-2026 |
-| Administrator | admin@lotuslearn.local | lotus-admin-2026 |
-
-Disable them with `SEED_DEMO_USER=false` before sharing the server. To make a real administrator:
-
-```bash
-npm run create-admin -- you@example.com "a-strong-password" "Your Name"
+```powershell
+Copy-Item .env.example .env
+python local-dictionary/setup_local_dictionary.py --skip-models --llm none --no-english --no-lexemes
 ```
 
-Other commands:
+Open **START-LOTUS.cmd** or run `npm.cmd start`. Keep the console open and visit [localhost:3005](http://localhost:3005). Register your account and select a learning language. On macOS or Linux, use `cp .env.example .env`, `python3` for the setup commands, and `npm start`.
 
-```bash
-npm run dev        # restart on server changes
-npm test           # 39 unit + integration tests (node:test, in-memory database)
-npm run test:e2e   # 14 browser flows (needs: pip install playwright && playwright install chromium)
-npm run check      # syntax + asset + unsafe-pattern checks
-npm run seed       # re-run the idempotent seed
-npm run backup     # consistent online copy of the database into data/backups/
-npm run art        # regenerate all pixel art from tools/build-art.mjs
+## Install the expanded dictionaries
+
+Run these commands from the app folder for the Malayalam and Kannada supplements.
+
+```powershell
+python -m pip install PyYAML
+python tools/download-extra.py
+python tools/build-extra.py
+python tools/expand-dictionaries.py
 ```
 
-## Optional external services
+Download [lotuslearn-v5-tamil-telugu-indexes.zip](https://github.com/micehaze/Lotus-Learn/releases/download/v5-dictionary-coverage/lotuslearn-v5-tamil-telugu-indexes.zip). With the app stopped, extract `native-wiktionary.db` and `wikipedia-usage.db` into `local-dictionary/data/`. Restart the app and check **Dictionary → Dictionary coverage**. Wikipedia results include usage excerpts and source links. [Data sources and licenses](DATA-SOURCES.md)
 
-Core learning (accounts, collections, lessons, lotuses, statistics, dictionary, reading, video playback, admin) works with **no keys at all**. These add features; each fails gracefully and is reported in Admin → Overview:
+## Enable local AI and translation
 
-| Feature | Setting | Without it |
-| --- | --- | --- |
-| AI vocabulary & story generation, AI review pass, translation assist, AI dictionary suggestions, AI video classification | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) | Jobs are skipped by the scheduler; manual runs fail with a clear "not configured" error; dictionary shows no AI button |
-| Automatic daily YouTube discovery (2–4/day) | `YOUTUBE_API_KEY` | Admins add videos by link; discovery skipped |
-| Password-reset emails | `RESEND_API_KEY` | Reset link is printed in the server console |
+Start Ollama and download the models listed in `.env`. These downloads are needed once.
 
-AI output is **never published automatically**: generated words and stories land in Admin → Review queue with script validation, duplicate checks, difficulty statistics and an independent AI review note.
-
-## Project layout
-
-```
-server/            HTTP server, router, services (one per module), migrations, seed
-  services/        auth, meta, vocabulary(+dictionary), collections(+selection), learning,
-                   mastery, stats, library(reading+videos), profile, content(automation)
-  integrations/    LLM provider abstraction, YouTube Data API, mailer
-shared/            Tamil transliteration/validation/search keys; water renderer (server+browser)
-public/            index.html, css/app.css (design system), js/ (SPA, scene engine, charts, pages)
-public/art/        original generated pixel art (scenes, sprite sheets, lotus stages, ornaments)
-tools/             build-art.mjs (art generator), check.mjs
-tests/             unit/, integration/, e2e/ (+ screenshots)
+```powershell
+ollama pull gemma3:4b
+ollama pull qwen3:4b
+ollama list
 ```
 
-## Architecture notes and deliberate deviations
+Restart Lotus Learn. `OLLAMA_MODEL` controls dictionary enrichment and other AI-assisted content. `DAILY_TOPIC_MODEL` controls the Daily Topic worker. It prepares one shared theme per date in the app timezone and publishes when all four language lists pass validation. If a list falls short, open **Admin → Daily Topics** to inspect the error, retry the list, or supply reviewed entries. Generation can take time on a CPU.
 
-* **Stack.** The brief preferred Next.js + PostgreSQL + Prisma + Recharts. This build was produced in an environment with no package registry or database server, so it uses a stack that could be executed and tested end to end there: Node's `http` server, `node:sqlite` (transactions, foreign keys, unique/partial indexes), and a framework-free ES-module SPA with hand-written SVG charts. The result runs with zero installs. All SQL is in the service layer and the schema in `server/migrations`, so a move to PostgreSQL means porting one migration file and the `db.js` wrapper; services are independent of HTTP and UI.
-* **Row-level security.** SQLite has no RLS, so every user-owned query carries an ownership predicate (`user_id = ?`) in the service layer; integration tests verify cross-user access returns 404.
-* **Integrity.** One active lesson per user and one lotus per word per day are enforced by database constraints, not only code. Answers are idempotent (unique per question).
-* **Animation.** A fixed 320×180 pixel stage is scaled to cover the viewport. Water and waterfalls are rendered into a canvas at 7–12 fps from the shared `shared/water.js` maths; plants sway via stepped CSS sprite-sheet animations with staggered timing; light pointer parallax on desktop. It pauses when the tab is hidden, is replaced by a complete static picture under `prefers-reduced-motion` or the user's "reduced"/"off" setting, and the static picture is shown before scripts load.
+For optional offline machine translation, install the dependencies and download IndicTrans2 into the app's model folders. Python 3.11 or 3.12 is recommended for this step.
 
-## Content honesty
+```powershell
+python -m venv local-dictionary/.venv
+$lotusPython = ".\local-dictionary\.venv\Scripts\python.exe"
+& $lotusPython -m pip install torch "transformers>=4.40,<5" sentencepiece sacremoses huggingface_hub protobuf
+& $lotusPython tools/install-local-models.py
+```
 
-Seed vocabulary and stories were written by the development team with AI assistance from common, high-frequency Tamil. They are marked **"editorial entry awaiting native-speaker review"**, not as verified. Admins mark entries native-reviewed after checking them.
+On macOS or Linux, set `lotusPython=./local-dictionary/.venv/bin/python` and invoke it as `"$lotusPython"`. The app uses the virtual environment on its next start. Source lookups, Vocabulary, and Reading updates work offline after setup. Video playback, the ChatGPT shortcut, and live web examples require internet access. Set `DICT_WEB_ENABLED=false` in `.env` to turn off live web examples.
 
-See **IMPLEMENTATION_REPORT.md** for the PRD-by-section status, test evidence and known gaps.
+## Use the app
+
+| Section | What to do |
+| --- | --- |
+| **Dictionary** | Search in English or in the selected language. Open a result for meanings, examples, and source attribution. Save useful words to collections. |
+| **Vocabulary and review** | Browse published words by language, level, and topic. Practice saved words and track mastery in your account. |
+| **Daily Topic** | Open the latest published theme or browse the archive. A date appears once all four language lists are ready. |
+| **Reading** | Select **Update Stories** for three original, template-based practice stories. Each has native script, Latin transliteration, and English translations. The custom-story shortcut provides a prompt to copy into ChatGPT in a new tab. |
+| **Videos** | Select **Update Videos** for three curated YouTube links in the active language. Open, favorite, or mark them watched. Later updates can reuse links from the catalog. |
+| **Grammar** | Browse lessons by language and proficiency level. |
+
+## Create an administrator and publish content
+
+Run the command below from the app folder with your own email and a new password. If the email already exists, the script grants admin rights and keeps its existing password. Sign in and open **Admin**.
+
+```powershell
+npm.cmd run create-admin -- you@example.com "choose-your-own-strong-password"
+```
+
+Select the target language before adding content. Published items are visible to all accounts using that language on **this installation**. Each download has its own database.
+
+- **Vocabulary.** Add individual entries or import CSV or JSON. Publish during import or approve entries in the review queue.
+- **Daily Topics.** Assign a future theme and open **Review** to add or edit each language list. Follow the line format in the editor. Each list needs at least 20 distinct entries and at least three valid collocations. Select **Publish** when the date is due and all four lists are ready.
+- **Stories.** Add an original or licensed article with at least 20 target-language sentences and matching English paragraphs. Save and publish it from **Pending**.
+- **Videos.** Paste a YouTube link or ID, supply a title if automatic metadata is unavailable, and publish it from **Pending**. Curated updates and manual links work without an API key. Optional discovery uses `YOUTUBE_API_KEY`.
+
+## Troubleshooting and backups
+
+- If a port is busy, close the other Lotus Learn console or update `PORT`, `PUBLIC_URL`, and `LOCAL_DICT_URL` in `.env`. The example settings use website port `3005` and dictionary port `8766`.
+- If Daily Topic stays pending, verify the model with `ollama list` and check **Admin → Daily Topics** for list errors. The command `npm.cmd run daily-topic:generate -- --status` also reports worker status.
+- Run `npm.cmd run backup` before upgrading. Accounts, progress, and manually published content live in `data/lotus.db`. Move your own database when you want to keep those records on a different installation.
+
+The browser UI lives in `public/`, the Node server and Admin API in `server/`, and the Python dictionary service in `local-dictionary/`. Run `npm.cmd run check` for source checks, `npm.cmd test` for Node tests, and `npm.cmd run dict:test` for dictionary tests.

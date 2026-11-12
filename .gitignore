@@ -1,8 +1,8 @@
-node_modules/
-.next/
-dist/
-build/
 .env
-.env.*
-!.env.example
-*.log
+data/
+node_modules/
+tests/e2e/screenshots/
+local-dictionary/data/
+local-dictionary/.venv/
+local-dictionary/**/__pycache__/
+verification/daily-topic-smoke-*.db*

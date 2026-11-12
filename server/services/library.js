@@ -1,7 +1,14 @@
-import { validateTamil, tokenize, hasTamil, normalizeText } from '../../shared/tamil.js';
+import { tokenize, normalizeText } from '../../shared/tamil.js';
+import { validateNative, countSentences, NATIVE_RE, isLang } from '../../shared/indic.js';
+const hasTamil = (t) => NATIVE_RE.test(String(t || ''));
+export const MIN_STORY_SENTENCES = 20;
+const WPM = { A1: 40, A2: 50, B1: 60, B2: 70, C1: 80, C2: 90 };
+export const readingMinutes = (words, level) => Math.max(1, Math.ceil((words || 0) / (WPM[level] || 60)));
 import { bad, notFound, conflict, parseJSON, j, sha256, slugify, clamp } from '../util.js';
 import { STORY_CATEGORIES, VIDEO_CATEGORIES } from './meta.js';
 import { parseYouTubeId } from '../integrations/index.js';
+import { storyBatch } from './storyTemplates.js';
+import { curatedVideos } from './curatedVideos.js';
 
 const SOURCE_TYPES = ['original', 'public-domain', 'open-license', 'ai-generated'];
 const LEVELS_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -21,6 +28,8 @@ export function assessDifficulty(paragraphs) {
 export function validateStoryInput(input, { levels }) {
   const problems = [];
   const warnings = [];
+  const lang = input.lang || 'ta';
+  if (!isLang(lang)) problems.push('Unknown language');
   const title = String(input.title || '').normalize('NFC').trim();
   if (!title) problems.push('Title is required');
   const paragraphs = (Array.isArray(input.paragraphs) ? input.paragraphs : []).map((p) => ({
@@ -28,11 +37,13 @@ export function validateStoryInput(input, { levels }) {
   })).filter((p) => p.ta);
   if (!paragraphs.length) problems.push('At least one Tamil paragraph is required');
   paragraphs.forEach((p, i) => {
-    const pr = validateTamil(p.ta, { minRatio: 0.7 });
+    const pr = validateNative(p.ta, lang, { minRatio: 0.7 });
     if (pr.length) problems.push(`Paragraph ${i + 1}: ${pr.join(', ')}`);
     if (!p.en) warnings.push(`Paragraph ${i + 1} has no English translation`);
     if (p.ta.length > 2000) problems.push(`Paragraph ${i + 1} is too long`);
   });
+  const sentences = paragraphs.reduce((a, p) => a + countSentences(p.ta), 0);
+  if (paragraphs.length && sentences < MIN_STORY_SENTENCES) problems.push(`A story needs at least ${MIN_STORY_SENTENCES} sentences in the target language (this one has ${sentences}).`);
   const level = String(input.level || '').toUpperCase();
   if (!levels.has(level)) problems.push('Unknown proficiency level');
   const category = STORY_CATEGORIES.includes(input.category) ? input.category : 'short-story';
@@ -47,6 +58,7 @@ export function validateStoryInput(input, { levels }) {
   return {
     problems, warnings,
     value: {
+      lang, sentences,
       title: title.slice(0, 160), title_en: String(input.title_en || input.titleEn || '').trim().slice(0, 160), summary: String(input.summary || '').trim().slice(0, 500),
       level, category, register: ['spoken', 'formal', 'literary', 'common', 'colloquial'].includes(input.register) ? input.register : 'formal',
       paragraphs, source_type: sourceType, license: license.slice(0, 200), source_note: sourceNote.slice(0, 500), topic_id: input.topic_id || input.topicId || null,
@@ -57,9 +69,9 @@ export function validateStoryInput(input, { levels }) {
 
 function rowToStory(r, progress) {
   return {
-    id: r.id, slug: r.slug, title: r.title, titleEn: r.title_en, summary: r.summary, level: r.level, category: r.category, register: r.register,
+    id: r.id, lang: r.lang || 'ta', slug: r.slug, title: r.title, titleEn: r.title_en, summary: r.summary, level: r.level, category: r.category, register: r.register,
     topicId: r.topic_id, topic: r.topic_name || null, sourceType: r.source_type, sourceNote: r.source_note, license: r.license, status: r.status,
-    reviewStatus: r.review_status, wordCount: r.word_count, createdAt: r.created_at, publishedAt: r.published_at,
+    reviewStatus: r.review_status, wordCount: r.word_count, readingMinutes: readingMinutes(r.word_count, r.level), createdAt: r.created_at, publishedAt: r.published_at,
     validation: parseJSON(r.validation, {}),
     progress: progress ? { progress: progress.progress, lastParagraph: progress.last_paragraph, completedAt: progress.completed_at } : null,
   };
@@ -69,8 +81,9 @@ export function createLibraryService({ db, clock, meta, youtube }) {
   const now = () => clock.now().toISOString();
 
   // ------------------------------------------------------------------ stories
-  function listStories(userId, { level, category, topic, q, status = 'published', page = 1 } = {}) {
+  function listStories(userId, { lang, level, category, topic, q, status = 'published', page = 1 } = {}) {
     const where = ['s.status = ?']; const args = [status];
+    if (lang) { where.push('s.lang = ?'); args.push(lang); }
     if (level) { where.push('s.level = ?'); args.push(level); }
     if (category) { where.push('s.category = ?'); args.push(category); }
     if (topic) { where.push('t.slug = ?'); args.push(topic); }
@@ -87,7 +100,8 @@ export function createLibraryService({ db, clock, meta, youtube }) {
     const r = db.get(`SELECT s.*, t.name AS topic_name FROM stories s LEFT JOIN topics t ON t.id = s.topic_id WHERE s.id = ? ${any ? '' : "AND s.status = 'published'"}`, id);
     if (!r) throw notFound('Story not found');
     const prog = userId ? db.get('SELECT * FROM reading_history WHERE user_id = ? AND story_id = ?', userId, id) : null;
-    return { ...rowToStory(r, prog), paragraphs: parseJSON(r.paragraphs, []) };
+    const paragraphs = parseJSON(r.paragraphs, []);
+    return { ...rowToStory(r, prog), paragraphs, sentenceCount: paragraphs.reduce((a, p) => a + countSentences(p.ta), 0) };
   }
 
   function saveProgress(userId, id, { paragraph = 0, progress = 0 }) {
@@ -103,9 +117,9 @@ export function createLibraryService({ db, clock, meta, youtube }) {
     return db.get('SELECT progress, last_paragraph AS lastParagraph, completed_at AS completedAt FROM reading_history WHERE user_id = ? AND story_id = ?', userId, id);
   }
 
-  function readingHistory(userId) {
+  function readingHistory(userId, lang = 'ta') {
     return db.all(`SELECT s.id, s.title, s.title_en, s.level, rh.progress, rh.updated_at, rh.completed_at FROM reading_history rh JOIN stories s ON s.id = rh.story_id
-      WHERE rh.user_id = ? AND s.status = 'published' ORDER BY rh.updated_at DESC LIMIT 20`, userId)
+      WHERE rh.user_id = ? AND s.lang = ? AND s.status = 'published' ORDER BY rh.updated_at DESC LIMIT 20`, userId, lang)
       .map((r) => ({ id: r.id, title: r.title, titleEn: r.title_en, level: r.level, progress: r.progress, updatedAt: r.updated_at, completedAt: r.completed_at }));
   }
 
@@ -116,16 +130,32 @@ export function createLibraryService({ db, clock, meta, youtube }) {
     let slug = slugify(value.title_en || value.title);
     if (db.get('SELECT id FROM stories WHERE slug = ?', slug)) slug = `${slug}-${value.content_hash.slice(0, 6)}`;
     const ts = now();
-    const r = db.run(`INSERT INTO stories(slug, title, title_en, summary, level, topic_id, category, register, paragraphs, source_type, source_note, license, status, review_status, validation, content_hash, word_count, idempotency_key, created_at, published_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, slug, value.title, value.title_en, value.summary, value.level, value.topic_id, value.category, value.register,
+    const r = db.run(`INSERT INTO stories(lang, slug, title, title_en, summary, level, topic_id, category, register, paragraphs, source_type, source_note, license, status, review_status, validation, content_hash, word_count, idempotency_key, created_at, published_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.lang, slug, value.title, value.title_en, value.summary, value.level, value.topic_id, value.category, value.register,
       j(value.paragraphs), value.source_type, value.source_note, value.license, status, reviewStatus, j({ warnings, difficulty: value.difficulty, ...extraValidation }),
       value.content_hash, value.word_count, idempotencyKey, ts, status === 'published' ? ts : null);
     return Number(r.lastInsertRowid);
   }
 
+  function refreshStories(userId, lang) {
+    return db.tx(() => {
+      const prefix = 'practice-story:' + lang + ':';
+      const last = db.get("SELECT idempotency_key FROM stories WHERE idempotency_key GLOB ? ORDER BY idempotency_key DESC LIMIT 1", prefix + '*');
+      const variant = last ? Number(last.idempotency_key.slice(prefix.length).split(':')[0]) + 1 : 0;
+      return storyBatch(lang, variant).map((story, index) => {
+        const id = createStory(story, {
+          status: 'published',
+          reviewStatus: 'ai-unreviewed',
+          idempotencyKey: prefix + String(variant).padStart(12, '0') + ':' + index,
+        });
+        return getStory(id, userId);
+      });
+    });
+  }
+
   function updateStory(id, input) {
     const cur = getStory(id, null, { any: true });
-    const merged = { title: cur.title, title_en: cur.titleEn, summary: cur.summary, level: cur.level, category: cur.category, register: cur.register, paragraphs: cur.paragraphs, source_type: cur.sourceType, license: cur.license, source_note: cur.sourceNote, topic_id: cur.topicId, ...input };
+    const merged = { lang: cur.lang, title: cur.title, title_en: cur.titleEn, summary: cur.summary, level: cur.level, category: cur.category, register: cur.register, paragraphs: cur.paragraphs, source_type: cur.sourceType, license: cur.license, source_note: cur.sourceNote, topic_id: cur.topicId, ...input };
     const { value, problems, warnings } = validateStoryInput(merged, meta.snapshot());
     if (problems.length) throw bad('Story is invalid', { problems, warnings });
     if (db.get('SELECT id FROM stories WHERE content_hash = ? AND id != ?', value.content_hash, id)) throw conflict('An identical story already exists', { duplicate: true });
@@ -142,16 +172,17 @@ export function createLibraryService({ db, clock, meta, youtube }) {
   // ------------------------------------------------------------------ videos
   function rowToVideo(r) {
     return {
-      id: r.id, platform: r.platform, externalId: r.external_id, title: r.title, channel: r.channel, description: r.description, thumbnailUrl: r.thumbnail_url,
+      id: r.id, lang: r.lang || 'ta', platform: r.platform, externalId: r.external_id, url: r.url || null, title: r.title, channel: r.channel, description: r.description, thumbnailUrl: r.thumbnail_url,
       level: r.level, topicId: r.topic_id, topic: r.topic_name || null, category: r.category, durationSeconds: r.duration_seconds, register: r.register, accent: r.accent,
       publishedAt: r.published_at, createdAt: r.created_at, status: r.status, source: r.source, hasTranscript: !!r.transcript, transcriptSource: r.transcript_source,
       validation: parseJSON(r.validation, {}), favorite: !!r.favorite, watched: !!r.watched,
       embedUrl: r.platform === 'youtube' ? `https://www.youtube-nocookie.com/embed/${r.external_id}` : null,
-      watchUrl: r.platform === 'youtube' ? `https://www.youtube.com/watch?v=${r.external_id}` : null,
+      watchUrl: r.platform === 'youtube' ? `https://www.youtube.com/watch?v=${r.external_id}` : r.url,
     };
   }
-  function listVideos(userId, { level, topic, category, favorite, watched, q, status = 'published' } = {}) {
+  function listVideos(userId, { lang, level, topic, category, favorite, watched, q, status = 'published' } = {}) {
     const where = ['v.status = ?']; const args = [status];
+    if (lang) { where.push('v.lang = ?'); args.push(lang); }
     if (level) { where.push('v.level = ?'); args.push(level); }
     if (topic) { where.push('t.slug = ?'); args.push(topic); }
     if (category) { where.push('v.category = ?'); args.push(category); }
@@ -205,23 +236,54 @@ export function createLibraryService({ db, clock, meta, youtube }) {
     return { out, problems };
   }
 
-  async function addVideo(input, { status = 'pending', source = 'admin' } = {}) {
-    const externalId = parseYouTubeId(input.url || input.externalId);
-    if (!externalId) throw bad('Enter a valid YouTube link or video ID');
-    if (db.get("SELECT id FROM videos WHERE platform = 'youtube' AND external_id = ?", externalId)) throw conflict('This video is already in the library', { duplicate: true });
+  async function addVideo(input, { status = 'pending', source = 'admin', lang } = {}) {
+    const L = lang || input.lang || 'ta';
+    if (!isLang(L)) throw bad('Unknown language');
+    let externalId = parseYouTubeId(input.url || input.externalId);
+    let platform = 'youtube'; let link = null;
+    if (!externalId) {
+      let u; try { u = new URL(String(input.url || '')); } catch { u = null; }
+      if (!u || !/^https?:$/.test(u.protocol)) throw bad('Enter a valid YouTube link, video ID, or https link to a legally accessible video page');
+      u.hash = ''; link = u.toString(); platform = 'link'; externalId = sha256(link).slice(0, 24);
+      if (!input.title) throw bad('Give a title for external video links');
+    }
+    if (db.get('SELECT id FROM videos WHERE platform = ? AND external_id = ?', platform, externalId)) throw conflict('This video is already in the library', { duplicate: true });
     let metaInfo = null;
-    if (!input.title) metaInfo = (youtube.configured ? (await youtube.details([externalId]).catch(() => []))[0] : null) || (await youtube.oembed(externalId));
+    if (!input.title && platform === 'youtube') metaInfo = (youtube.configured ? (await youtube.details([externalId]).catch(() => []))[0] : null) || (await youtube.oembed(externalId));
+    return storeVideo(input, { platform, externalId, link, metaInfo, status, source, lang: L });
+  }
+
+  function storeVideo(input, { platform, externalId, link, metaInfo, status, source, lang }) {
     const fields = { title: input.title || metaInfo?.title || '', ...input };
     const { out, problems } = validateVideoFields(fields, meta.snapshot());
     if (!out.title) problems.push('Title is required (metadata could not be fetched automatically)');
     if (problems.length) throw bad('Video is invalid', { problems });
     const ts = now();
-    const r = db.run(`INSERT INTO videos(platform, external_id, title, channel, description, thumbnail_url, level, topic_id, category, duration_seconds, register, accent, published_at, transcript, transcript_source, status, source, validation, created_at)
-      VALUES ('youtube',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, externalId, out.title, String(input.channel || metaInfo?.channel || '').slice(0, 120), out.description || metaInfo?.description || '',
-      metaInfo?.thumbnailUrl || `https://i.ytimg.com/vi/${externalId}/mqdefault.jpg`, out.level || null, out.topic_id || null, out.category || 'educational',
+    const r = db.run(`INSERT INTO videos(lang, platform, external_id, url, title, channel, description, thumbnail_url, level, topic_id, category, duration_seconds, register, accent, published_at, transcript, transcript_source, status, source, validation, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, lang, platform, externalId, link, out.title, String(input.channel || metaInfo?.channel || '').slice(0, 120), out.description || metaInfo?.description || '',
+      platform === 'youtube' ? (metaInfo?.thumbnailUrl || `https://i.ytimg.com/vi/${externalId}/mqdefault.jpg`) : '', out.level || null, out.topic_id || null, out.category || 'educational',
       out.duration_seconds || metaInfo?.durationSeconds || 0, out.register || 'spoken', out.accent || '', input.publishedAt || metaInfo?.publishedAt || null,
       out.transcript || null, out.transcript_source || '', status, source, j(input.validation || {}), ts);
     return Number(r.lastInsertRowid);
+  }
+
+  function refreshVideos(userId, lang, previous) {
+    const last = new Set(Array.isArray(previous) ? previous.slice(0, 3) : []);
+    return db.tx(() => {
+      const picks = curatedVideos[lang].map(([externalId, title, channel, description, category = 'educational', level = 'A1']) => ({
+        externalId, title, channel, description, category, level,
+        existing: db.get("SELECT id, lang, status FROM videos WHERE platform = 'youtube' AND external_id = ?", externalId),
+      })).filter(({ existing }) => !existing || (existing.lang === lang && existing.status === 'published'));
+      const fresh = picks.filter(({ existing }) => !existing);
+      const available = picks.filter(({ existing, externalId }) => existing && !last.has(externalId));
+      const repeat = picks.filter(({ existing, externalId }) => existing && last.has(externalId));
+      const chosen = [...fresh, ...available, ...repeat].slice(0, 3);
+      if (chosen.length < 3) throw bad('Fewer than three curated links are available for this language.');
+      return chosen.map(({ existing, externalId, ...input }) => {
+        const id = existing?.id || storeVideo(input, { platform: 'youtube', externalId, lang, status: 'published', source: 'curated' });
+        return getVideo(id, userId);
+      });
+    });
   }
   function updateVideo(id, input) {
     getVideo(id, null, { any: true });
@@ -234,5 +296,18 @@ export function createLibraryService({ db, clock, meta, youtube }) {
   function setVideoStatus(id, status) { if (!db.run('UPDATE videos SET status = ? WHERE id = ?', status, id).changes) throw notFound('Video not found'); }
   function deleteVideo(id) { if (!db.run('DELETE FROM videos WHERE id = ?', id).changes) throw notFound('Video not found'); }
 
-  return { listStories, getStory, saveProgress, readingHistory, createStory, updateStory, setStoryStatus, deleteStory, listVideos, getVideo, setVideoState, addVideo, updateVideo, setVideoStatus, deleteVideo };
+  /** Published stories below the minimum length are moved back to review (never deleted). */
+  function enforceStoryMinimum() {
+    let moved = 0;
+    for (const r of db.all("SELECT id, paragraphs, validation FROM stories WHERE status = 'published'")) {
+      const n = parseJSON(r.paragraphs, []).reduce((a, p) => a + countSentences(p.ta), 0);
+      if (n < MIN_STORY_SENTENCES) {
+        db.run("UPDATE stories SET status = 'pending', validation = ? WHERE id = ?", j({ ...parseJSON(r.validation, {}), lengthHold: `Held for review: ${n} sentences, minimum is ${MIN_STORY_SENTENCES}` }), r.id);
+        moved++;
+      }
+    }
+    return moved;
+  }
+
+  return { enforceStoryMinimum, listStories, getStory, saveProgress, readingHistory, createStory, refreshStories, updateStory, setStoryStatus, deleteStory, listVideos, getVideo, setVideoState, addVideo, refreshVideos, updateVideo, setVideoStatus, deleteVideo };
 }

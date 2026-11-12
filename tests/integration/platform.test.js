@@ -130,7 +130,7 @@ test('selection spans collections, prevents duplicates and enforces the 50-word 
   // 50 limit
   await c.post('/api/selection/clear');
   const big = (await c.post('/api/collections', { title: 'Everything' })).data.id;
-  const all = srv.app.db.all("SELECT id FROM vocabulary WHERE status='published'").map((x) => x.id);
+  const all = srv.app.db.all("SELECT id FROM vocabulary WHERE status='published' AND lang = 'ta'").map((x) => x.id);
   assert.ok(all.length > 50);
   await c.post(`/api/collections/${big}/words`, { vocabularyIds: all });
   const over = await c.post('/api/selection', { collectionId: big });
@@ -174,11 +174,13 @@ test('multilingual dictionary: exact, partial, fuzzy, transliteration, phrase, v
   await c.post(`/api/collections/${col}/words`, { vocabularyIds: d1.words.slice(0, 3).map((w) => w.id) });
   const d2 = (await c.get('/api/vocabulary/daily')).data;
   for (const w of d1.words.slice(0, 3)) assert.ok(!d2.words.some((x) => x.id === w.id));
+  srv.app.services.meta.updateSettings({ list_min_words: 1 }); // seed lists are small; the 40-word public minimum is tested in dictionary-engine.test.js
   const lists = (await c.get('/api/vocabulary/lists')).data;
   assert.ok(lists.length >= 5);
   const lid = lists[0].id;
   const saved = await c.post(`/api/collections/${col}/words`, { listId: lid });
   assert.ok(saved.data.added + saved.data.skipped === (await c.get(`/api/vocabulary/lists/${lid}`)).data.words.length);
+  srv.app.services.meta.updateSettings({ list_min_words: 40 });
 });
 
 // ------------------------------------------------------------------ reading & videos
@@ -194,12 +196,14 @@ test('reading library: progress, pending stories hidden, licensing and duplicate
   assert.equal((await c.get('/api/reading/history')).data[0].id, id);
   assert.equal((await c.get('/api/stories?level=B1')).data.items.every((x) => x.level === 'B1'), true);
   const admin = await adminClient();
-  const story = { title: 'சிறிய கதை', title_en: 'A small story', level: 'A1', category: 'everyday', source_type: 'original', paragraphs: [{ ta: 'ராமு பள்ளிக்குப் போனான்.', en: 'Ramu went to school.' }] };
+  const sentences = Array.from({ length: 20 }, (_, i) => `ராமு ${i + 1} முறை பள்ளிக்குப் போனான்.`).join(' ');
+  const story = { title: 'சிறிய கதை', title_en: 'A small story', level: 'A1', category: 'everyday', source_type: 'original', paragraphs: [{ ta: sentences, en: 'Ramu went to school (twenty times).' }] };
+  assert.equal((await admin.post('/api/admin/stories', { ...story, title: 'குறுகிய கதை', paragraphs: [{ ta: 'ராமு பள்ளிக்குப் போனான்.', en: 'Ramu went to school.' }] })).status, 400, 'stories under 20 sentences are rejected');
   const created = await admin.post('/api/admin/stories', story);
   assert.equal(created.status, 200);
   assert.equal((await c.get(`/api/stories/${created.data.id}`)).status, 404, 'pending stories are not visible to learners');
   assert.equal((await admin.post('/api/admin/stories', story)).status, 409, 'duplicate text rejected');
-  assert.equal((await admin.post('/api/admin/stories', { ...story, paragraphs: [{ ta: 'வேறு கதை.' }], source_type: 'public-domain' })).status, 400, 'public domain needs licence + citation');
+  assert.equal((await admin.post('/api/admin/stories', { ...story, paragraphs: [{ ta: sentences.replace(/ராமு/g, 'சோமு') }], source_type: 'public-domain' })).status, 400, 'public domain needs licence + citation');
   assert.equal((await admin.post('/api/admin/stories', { ...story, paragraphs: [{ ta: 'English only text' }] })).status, 400);
   await admin.post(`/api/admin/stories/${created.data.id}/status`, { status: 'published' });
   assert.equal((await c.get(`/api/stories/${created.data.id}`)).status, 200);
@@ -288,7 +292,8 @@ function mockAI({ fail = false } = {}) {
         { tamil: 'தண்ணீர்', english: 'water', part_of_speech: 'noun' },
       ];
       if (prompt.startsWith('Review these')) return [{ index: 0, ok: true, issues: [] }, { index: 1, ok: false, issues: ['check register'] }];
-      if (prompt.startsWith('Write an ORIGINAL')) return { title: 'நிலாவும் குழந்தையும்', title_en: 'The moon and the child', summary: 'A child talks to the moon.', register: 'formal', paragraphs: [{ ta: 'ஒரு குழந்தை நிலாவைப் பார்த்தது.', en: 'A child looked at the moon.' }, { ta: 'நிலா சிரித்தது.', en: 'The moon smiled.' }] };
+      if (prompt.startsWith('Write an ORIGINAL')) return { title: 'நிலாவும் குழந்தையும்', title_en: 'The moon and the child', summary: 'A child talks to the moon.', register: 'formal',
+        paragraphs: Array.from({ length: 11 }, (_, i) => ({ ta: `ஒரு குழந்தை ${i + 1} முறை நிலாவைப் பார்த்தது. நிலா சிரித்தது.`, en: `A child looked at the moon (${i + 1}). The moon smiled.` })) };
       if (prompt.startsWith('Review this Tamil learner story')) return { ok: true, issues: [], suggested_level: 'A1' };
       if (prompt.startsWith('Classify')) return { level: 'A2', category: 'cooking', topic: 'food-and-cooking', register: 'spoken', accent: 'Chennai' };
       return {};
@@ -342,15 +347,19 @@ test('mocked AI: generated vocabulary & stories are validated, deduplicated and 
     const d2 = (await admin.post('/api/admin/jobs', { type: 'video_discovery', payload: { count: 4 } })).data;
     assert.equal(d2.result.added, 0, 'already-known videos are never added twice');
     // scheduler idempotency: running twice on the same day never duplicates jobs
-    const before = s.app.db.get('SELECT COUNT(*) AS n FROM content_jobs').n;
     await admin.post('/api/admin/jobs/run-scheduler');
     const mid = s.app.db.get('SELECT COUNT(*) AS n FROM content_jobs').n;
     await admin.post('/api/admin/jobs/run-scheduler');
-    assert.equal(s.app.db.get('SELECT COUNT(*) AS n FROM content_jobs').n, mid);
+    assert.equal(s.app.db.get('SELECT COUNT(*) AS n FROM content_jobs').n, mid, 'a second run (or a second tab) never duplicates jobs');
     const plan = s.app.services.content.planToday();
-    assert.equal(mid - before, plan.plan.length);
-    const stories = plan.plan.filter((p) => p.type === 'story').length;
-    assert.ok(stories >= 3 && stories <= 5, 'daily story target within the configured 3–5 range');
+    for (const p of plan.plan) assert.ok(s.app.db.get('SELECT id FROM content_jobs WHERE idempotency_key = ?', p.key), `planned job ${p.key} was queued`);
+    for (const lang of ['ta', 'ml', 'kn', 'te']) {
+      const stories = plan.plan.filter((p) => p.type === 'story' && p.lang === lang).length;
+      const gram = plan.plan.filter((p) => p.type === 'grammar' && p.lang === lang).length;
+      assert.ok(stories >= 3 && stories <= 5, `${lang}: 3–5 stories planned per day`);
+      assert.ok(gram >= 3 && gram <= 5, `${lang}: 3–5 grammar lessons planned per day`);
+      assert.equal(plan.plan.filter((p) => p.type === 'video_discovery' && p.lang === lang).length, 1);
+    }
     assert.ok(s.app.db.get('SELECT COUNT(*) AS n FROM stories WHERE status = \'published\' AND source_type = \'ai-generated\'').n === 0, 'automation never auto-publishes AI stories');
   } finally { await s.close(); }
 });
@@ -359,8 +368,11 @@ test('mocked AI outage: jobs record the failure and the learning app keeps worki
   const s = await startTestServer({ deps: { ai: mockAI({ fail: true }) } });
   try {
     const admin = await adminClient(s);
-    const j = (await admin.post('/api/admin/jobs', { type: 'story' })).data;
-    assert.equal(j.status, 'failed'); assert.equal(j.errorCode, 'network_error');
+    let j = (await admin.post('/api/admin/jobs', { type: 'story' })).data;
+    assert.equal(j.status, 'queued', 'temporary failures are queued for retry'); assert.equal(j.errorCode, 'network_error'); assert.ok(j.nextRetryAt);
+    j = (await admin.post(`/api/admin/jobs/${j.id}/retry`)).data;
+    j = (await admin.post(`/api/admin/jobs/${j.id}/retry`)).data;
+    assert.equal(j.status, 'failed', 'gives up after 3 attempts'); assert.equal(j.attempts, 3);
     const learner = s.client(); await registerUser(learner);
     const r = await learner.post('/api/dictionary/ai-suggest', { q: 'umbrella' });
     assert.equal(r.status, 503);

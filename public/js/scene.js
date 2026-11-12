@@ -13,14 +13,25 @@ async function getManifest() {
   return manifest;
 }
 
-export async function setScene(name) {
+// Pages ask for a role-named scene; when a learning language is active, the language's background
+// configuration (backgrounds.js) chooses the scene for that section instead.
+import { backgroundFor, pageKey } from './backgrounds.js';
+export function themedScene(name, page = pageKey(location.pathname)) {
+  const theme = document.body.dataset.theme;
+  return (theme && backgroundFor(theme, page)) || (name === 'notes' ? 'lagoon' : name);
+}
+export async function setScene(requested, page) {
   const el = root();
   if (!el) return;
+  const name = themedScene(requested, page);
   const live = motionAllowed();
   if (current && current.name === name && current.live === live) return;
   current?.stop?.();
   const m = await getManifest();
   const s = m.scenes[name] || m.scenes.lagoon;
+  // readability veil per scene (busy or bright scenes get a stronger wash behind the UI)
+  const [vt, vb] = s.veil || [0, 0.18];
+  el.style.setProperty('--veil-top', `rgba(18, 40, 48, ${vt})`); el.style.setProperty('--veil-bottom', `rgba(18, 40, 48, ${vb})`);
   el.style.setProperty('--focus', s.focus);
   el.className = 'scene--still';
   el.innerHTML = `<div class="scene__static" style="background-image:url('/${s.full}')"></div>`;
@@ -37,8 +48,9 @@ export async function setScene(name) {
       <div class="scene__layer scene__layer--mid"></div><div class="scene__layer scene__layer--front"></div>`;
     for (const sp of s.sprites) {
       const d = document.createElement('div');
-      d.className = `sprite${sp.flip ? ' sprite--flip' : ''}${sp.kind === 'bob' ? ' sprite--bob' : ''}`;
-      d.style.cssText = `left:${sp.x}px;top:${sp.y}px;width:${sp.fw}px;height:${sp.fh}px;background-image:url('/${sp.sheet}');--fw:${sp.fw}px;animation-duration:${sp.dur}s${sp.kind === 'bob' ? `,${sp.dur * 0.8}s` : ''};animation-delay:${sp.delay}s`;
+      d.className = `sprite${sp.flip ? ' sprite--flip' : ''}${sp.kind === 'bob' ? ' sprite--bob' : ''}${sp.kind === 'rise' ? ' sprite--rise' : ''}${sp.kind === 'sink' ? ' sprite--sink' : ''}${sp.kind === 'fall' ? ' sprite--fall' : ''}`;
+      const second = sp.kind === 'bob' ? `,${sp.dur * 0.8}s` : sp.kind === 'rise' || sp.kind === 'sink' ? ',40s' : sp.kind === 'fall' ? `,${sp.dur}s` : '';
+      d.style.cssText = `left:${sp.x}px;top:${sp.y}px;width:${sp.fw}px;height:${sp.fh}px;background-image:url('/${sp.sheet}');--fw:${sp.fw}px;animation-duration:${sp.dur}s${second};animation-delay:${sp.delay}s${second ? ',0s' : ''}`;
       stage.querySelector(`.scene__layer--${sp.layer === 'mid' ? 'mid' : 'front'}`).append(d);
     }
     el.append(stage);

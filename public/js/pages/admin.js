@@ -1,18 +1,18 @@
-import { h, raw, api, qs, state, win, level, toast, errorsBox, confirmDialog, modal, fmtDate } from '../core.js';
+import { h, raw, api, qs, state, win, level, toast, errorsBox, confirmDialog, modal, fmtDate, langName } from '../core.js';
 
-const TABS = [['overview', 'Overview'], ['review', 'Review queue'], ['vocabulary', 'Vocabulary'], ['import', 'Import'], ['lists', 'Lists'], ['taxonomy', 'Topics & levels'], ['stories', 'Stories'], ['videos', 'Videos'], ['jobs', 'Automation'], ['settings', 'Settings'], ['users', 'Users']];
+const TABS = [['overview', 'Overview'], ['review', 'Review queue'], ['vocabulary', 'Vocabulary'], ['import', 'Import'], ['lists', 'Lists'], ['taxonomy', 'Topics & levels'], ['stories', 'Stories'], ['videos', 'Videos'], ['grammar', 'Grammar'], ['topics', 'Daily Topics'], ['jobs', 'Automation'], ['settings', 'Settings'], ['users', 'Users']];
 const status = (s) => h`<span class="status-${s}">${s}</span>`;
 const pairsToText = (arr) => (arr || []).map((c) => [c.ta, c.en, c.form].filter(Boolean).join(' | ')).join('\n');
 const textToPairs = (t) => String(t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const [ta, en = '', form] = l.split('|').map((x) => x.trim()); return form ? { ta, en, form } : { ta, en }; });
 
 export async function page({ params, query, navigate }) {
   const tab = params.tab || 'overview';
-  const fn = { overview, review, vocabulary, import: importTab, lists, taxonomy, stories, videos, jobs, settings, users }[tab];
+  const fn = { overview, review, vocabulary, import: importTab, lists, taxonomy, stories, videos, grammar: grammarTab, topics: topicsTab, jobs, settings, users }[tab];
   if (!fn) throw Object.assign(new Error('Unknown admin section'), { status: 404 });
   const view = await fn({ query, navigate });
   return {
     title: `Admin · ${TABS.find((t) => t[0] === tab)[1]}`, scene: 'fern', keepScroll: true,
-    html: h`<div class="page-head"><div><h1>Content dashboard</h1><p>Manage the library, approve AI content and monitor automation.</p></div></div>
+    html: h`<div class="page-head"><div><h1>Content dashboard · ${langName()}</h1><p>Managing ${langName()} content. Switch the language at the top to manage another library.</p></div></div>
       ${win({ title: TABS.find((t) => t[0] === tab)[1], variant: 'salmon', corner: 'hibiscus', body: h`<nav class="tabs" aria-label="Admin sections">${TABS.map(([k, l]) => h`<a href="/admin/${k}" ${k === tab ? raw('aria-current="page"') : ''}>${l}</a>`)}</nav>${view.html}` })}`,
     mount: (root) => view.mount?.(root, () => navigate(location.pathname + location.search, { replace: true })),
   };
@@ -26,14 +26,14 @@ async function overview() {
     html: h`<div class="statgrid"><div class="stat"><b>${c.users}</b><span>accounts</span></div><div class="stat"><b>${c.sessions}</b><span>lessons started</span></div><div class="stat"><b>${(c.vocabulary.pending || 0) + (c.stories.pending || 0) + (c.videos.pending || 0)}</b><span>items awaiting review</span></div></div>
     <dl class="kv" style="margin-top:14px"><dt>Vocabulary</dt><dd>${cnt(c.vocabulary)}</dd><dt>Stories</dt><dd>${cnt(c.stories)}</dd><dt>Videos</dt><dd>${cnt(c.videos)}</dd></dl>
     <h3 style="margin-top:16px">Automation</h3>
-    <dl class="kv"><dt>Scheduler</dt><dd>${a.enabled ? 'enabled' : 'disabled'}</dd><dt>AI provider</dt><dd>${a.ai.configured ? `${a.ai.provider} (${a.ai.model})` : h`<span class="status-failed">not configured</span> — set ANTHROPIC_API_KEY or OPENAI_API_KEY`}</dd>
+    <dl class="kv"><dt>Scheduler</dt><dd>${a.enabled ? 'enabled' : 'disabled'}</dd><dt>AI provider</dt><dd>${a.ai.configured ? `${a.ai.provider} (${a.ai.model})` : h`<span class="status-failed">not configured</span> — install Ollama and set OLLAMA_MODEL (free, runs locally)`}</dd>
       <dt>YouTube discovery</dt><dd>${a.youtube.configured ? 'configured' : h`<span class="status-failed">not configured</span> — set YOUTUBE_API_KEY`}</dd><dt>Today (${a.today})</dt><dd>${a.plannedJobs.length ? a.plannedJobs.map((p) => h`${p.type}: ${p.status}<br>`) : h`no jobs planned<br>`}${a.skipped.map((s) => h`<span class="small muted">${s.type} skipped: ${s.reason}</span><br>`)}</dd></dl>
     <div class="btn-row" style="margin-top:12px"><a class="btn" href="/admin/review">Open review queue</a><a class="btn btn--cyan" href="/admin/jobs">Automation</a></div>`,
   };
 }
 
 async function review() {
-  const q = await api('/admin/review');
+  const q = await api(`/admin/review?lang=${state.lang}`);
   const act = (kind, id) => h`<div class="btn-row"><button class="btn btn--small btn--green" data-act="${kind}:${id}:published">Approve</button><button class="btn btn--small btn--danger" data-act="${kind}:${id}:rejected">Reject</button></div>`;
   const aiNote = (v) => (v?.aiReview ? h`<div class="small">AI review: ${v.aiReview.ok === true ? 'no issues' : v.aiReview.ok === false ? h`<span class="status-failed">issues</span>` : 'unavailable'} ${(v.aiReview.issues || []).join('; ')}</div>` : '');
   return {
@@ -41,11 +41,15 @@ async function review() {
     <h3>Vocabulary (${q.vocabulary.length})</h3>${q.vocabulary.length ? h`<div class="table-wrap"><table class="tbl"><tr><th>Tamil</th><th>English / Hindi / Malayalam</th><th>Examples</th><th>Checks</th><th></th></tr>${q.vocabulary.map((v) => h`<tr><td><span class="ta" lang="ta">${v.tamil}</span><br><span class="small">${v.transliteration}</span><br>${level(v.level)} <span class="small">${v.partOfSpeech}</span></td><td>${v.english}<br><span class="small">${v.hindi} · ${v.malayalam}</span></td><td class="small">${v.examples.map((e) => h`<div><span class="ta" lang="ta">${e.ta}</span> — ${e.en}</div>`)}</td><td class="small">${(v.validation.warnings || []).join('; ')}${aiNote(v.validation)}</td><td>${act('vocabulary', v.id)}<a class="small" href="/admin/vocabulary?edit=${v.id}">Edit</a></td></tr>`)}</table></div>` : h`<p class="muted">No pending words.</p>`}
     <h3 style="margin-top:16px">Stories (${q.stories.length})</h3>${q.stories.length ? h`<ul class="list">${q.stories.map((s) => h`<li class="spread"><span><span class="ta" lang="ta">${s.title}</span> ${level(s.level)} <span class="small">${s.sourceType} · suggested ${s.validation.difficulty?.suggestedLevel || '?'}</span>${aiNote(s.validation)}</span><span class="row"><a class="btn btn--small btn--ghost" href="/admin/stories?edit=${s.id}">Read & edit</a>${act('stories', s.id)}</span></li>`)}</ul>` : h`<p class="muted">No pending stories.</p>`}
     <h3 style="margin-top:16px">Videos (${q.videos.length})</h3>${q.videos.length ? h`<ul class="list">${q.videos.map((v) => h`<li class="spread"><span><a href="${v.watchUrl}" target="_blank" rel="noopener">${v.title}</a> ${level(v.level)} <span class="small">${v.category} · ${v.channel} · ${v.validation.classification || ''}</span></span>${act('videos', v.id)}</li>`)}</ul>` : h`<p class="muted">No pending videos.</p>`}
+    <h3 style="margin-top:16px">Grammar lessons (${q.grammar.length})</h3>${q.grammar.length ? h`<ul class="list">${q.grammar.map((g) => h`<li class="spread"><span>${g.title} ${level(g.level)} <span class="small">${g.source} · ${g.category || ''}</span>${aiNote(g.validation)}</span><span class="row"><a class="btn btn--small btn--ghost" href="/admin/grammar?edit=${g.id}">Read & edit</a>${act('grammar', g.id)}</span></li>`)}</ul>` : h`<p class="muted">No pending grammar lessons.</p>`}
+    <h3 style="margin-top:16px">AI dictionary enrichments (${q.enrichments.length})</h3>${q.enrichments.length ? h`<ul class="list">${q.enrichments.map((e) => h`<li class="spread"><a href="/dictionary/entry/${e.id}"><span class="ta" lang="${e.lang}">${e.tamil}</span> ${e.english}</a><span class="row"><button class="btn btn--small btn--green" data-enr="${e.id}:1">Approve all</button><button class="btn btn--small btn--danger" data-enr="${e.id}:0">Discard</button></span></li>`)}</ul>` : h`<p class="muted">No pending enrichments.</p>`}
     <h3 style="margin-top:16px">AI vocabulary lists (${q.lists.length})</h3>${q.lists.length ? h`<ul class="list">${q.lists.map((l) => h`<li class="spread"><span>${l.title} ${level(l.level)}</span><button class="btn btn--small btn--green" data-publist="${l.id}">Publish list (approved words only)</button></li>`)}</ul>` : h`<p class="muted">No pending lists.</p>`}`,
     mount(root, reload) {
       root.addEventListener('click', async (e) => {
         const b = e.target.closest('[data-act]');
         const pl = e.target.closest('[data-publist]');
+        const en = e.target.closest('[data-enr]');
+        if (en) { const [id, ok] = en.dataset.enr.split(':'); try { await api(`/admin/dictionary/${id}/review`, { method: 'POST', body: { approve: ok === '1' } }); toast(ok === '1' ? 'Approved.' : 'Discarded.'); reload(); } catch (x) { toast(x.message, 'bad'); } return; }
         try {
           if (b) { const [kind, id, st] = b.dataset.act.split(':'); await api(`/admin/${kind}/${id}/status`, { method: 'POST', body: { status: st } }); toast(st === 'published' ? 'Approved and published.' : 'Rejected.'); reload(); }
           if (pl) { await api(`/admin/lists/${pl.dataset.publist}`, { method: 'PATCH', body: { status: 'published' } }); toast('List published.'); reload(); }
@@ -287,12 +291,12 @@ async function videos({ query }) {
 }
 
 async function jobs() {
-  const r = await api('/admin/jobs');
+  const r = await api(`/admin/jobs?lang=${state.lang}`);
   const a = r.automation;
   return {
     html: h`<p class="small">Scheduler: <strong>${a.enabled ? 'enabled' : 'disabled'}</strong> · AI: ${a.ai.configured ? a.ai.provider : 'not configured'} · YouTube: ${a.youtube.configured ? 'configured' : 'not configured'}. Each job has a unique daily key, so re-running the scheduler never duplicates content.</p>
-    <div class="btn-row" style="margin-bottom:12px"><button class="btn" data-run="vocabulary">Generate vocabulary list</button><button class="btn" data-run="story">Generate story</button><button class="btn" data-run="video_discovery">Discover videos</button><button class="btn btn--cyan" data-sched>Run today's scheduled jobs</button></div>
-    <div class="table-wrap"><table class="tbl"><tr><th>#</th><th>Type</th><th>Status</th><th>Trigger</th><th>Created</th><th>Result / error</th><th></th></tr>${r.jobs.map((j) => h`<tr><td>${j.id}</td><td>${j.type}</td><td>${status(j.status)}<br><span class="small">${j.attempts} attempt(s)</span></td><td class="small">${j.triggeredBy}</td><td class="small">${new Date(j.createdAt).toLocaleString()}</td><td class="small" style="max-width:340px">${j.error ? h`<span class="status-failed">${j.errorCode}</span> ${j.error}` : j.result ? h`<pre class="json">${JSON.stringify(j.result, null, 1)}</pre>` : ''}</td><td>${j.status === 'failed' ? h`<button class="btn btn--small" data-retry="${j.id}">Retry</button>` : ''}</td></tr>`)}</table></div>
+    <div class="btn-row" style="margin-bottom:12px"><button class="btn" data-run="vocabulary">Generate ${langName()} vocabulary</button><button class="btn" data-run="story">Generate story</button><button class="btn" data-run="grammar">Generate grammar lesson</button><button class="btn" data-run="video_discovery">Discover videos</button><button class="btn btn--cyan" data-sched>Run today's scheduled jobs</button></div>
+    <div class="table-wrap"><table class="tbl"><tr><th>#</th><th>Lang</th><th>Type</th><th>Status</th><th>Trigger</th><th>Created</th><th>Result / error</th><th></th></tr>${r.jobs.map((j) => h`<tr><td>${j.id}</td><td>${j.lang}</td><td>${j.type}</td><td>${status(j.status)}<br><span class="small">${j.attempts} attempt(s)</span></td><td class="small">${j.triggeredBy}</td><td class="small">${new Date(j.createdAt).toLocaleString()}</td><td class="small" style="max-width:340px">${j.error ? h`<span class="status-failed">${j.errorCode}</span> ${j.error}` : j.result ? h`<pre class="json">${JSON.stringify(j.result, null, 1)}</pre>` : ''}</td><td>${j.status === 'failed' ? h`<button class="btn btn--small" data-retry="${j.id}">Retry</button>` : ''}</td></tr>`)}</table></div>
     ${r.jobs.length ? '' : h`<p class="muted">No jobs have run yet.</p>`}`,
     mount(root, reload) {
       root.addEventListener('click', async (e) => {
@@ -316,7 +320,11 @@ async function settings() {
   return {
     html: h`<form data-set style="max-width:560px">${num('collection_word_limit', 'Maximum words per collection')}${num('daily_vocab_lists', 'AI vocabulary lists per day')}
       <div class="grid grid-2" style="gap:0 12px">${num('daily_videos_min', 'Videos per day (min)')}${num('daily_videos_max', 'Videos per day (max)')}${num('daily_stories_min', 'Stories per day (min)')}${num('daily_stories_max', 'Stories per day (max)')}</div>
+      <div class="grid grid-2" style="gap:0 12px">${num('daily_grammar_min', 'Grammar lessons per day (min)')}${num('daily_grammar_max', 'Grammar lessons per day (max)')}${num('daily_topic_words_min', 'Daily Topic words (min)')}${num('daily_topic_words_max', 'Daily Topic words (max)')}</div>
+      ${num('catchup_days', 'Days to catch up after downtime')}
+      <p class="small muted">Targets are per language, platform-wide (not per learner).</p>
       <label class="check"><input type="checkbox" name="automation_enabled" ${s.automation_enabled ? raw('checked') : ''}> Run scheduled content automation</label><br>
+      <label class="check"><input type="checkbox" name="auto_publish_validated" ${s.auto_publish_validated ? raw('checked') : ''}> Auto-publish AI content that passes validation and AI review (labelled as not human-reviewed)</label><br>
       <label class="check"><input type="checkbox" name="auto_publish_videos" ${s.auto_publish_videos ? raw('checked') : ''}> Publish discovered videos without review</label>
       <div data-err></div><div class="btn-row" style="margin-top:12px"><button class="btn" type="submit">Save settings</button></div></form>`,
     mount(root) {
@@ -335,5 +343,102 @@ async function users() {
   return {
     html: h`<div class="table-wrap"><table class="tbl"><tr><th>Name</th><th>Email</th><th>Level</th><th>Joined</th><th>Role</th></tr>${list.map((u) => h`<tr><td>${u.display_name}</td><td>${u.email}</td><td>${u.proficiency_level}</td><td class="small">${fmtDate(u.created_at)}</td><td><select data-role="${u.id}" aria-label="Role for ${u.email}" ${u.id === state.user.id ? raw('disabled') : ''}><option ${u.role === 'learner' ? raw('selected') : ''}>learner</option><option ${u.role === 'admin' ? raw('selected') : ''}>admin</option></select></td></tr>`)}</table></div>`,
     mount(root) { root.addEventListener('change', async (e) => { const s = e.target.closest('[data-role]'); if (!s) return; try { await api(`/admin/users/${s.dataset.role}`, { method: 'PATCH', body: { role: s.value } }); toast('Role updated.'); } catch (x) { toast(x.message, 'bad'); } }); },
+  };
+}
+
+async function grammarTab({ query }) {
+  const st = query.status || 'published';
+  const [list, cats] = await Promise.all([api(`/admin/grammar${qs({ status: st })}`), api('/admin/grammar/categories')]);
+  const editing = query.edit ? await api(`/admin/grammar/${query.edit}`) : null;
+  const exText = (arr) => (arr || []).map((e) => [e.native, e.en, e.note].filter(Boolean).join(' | ')).join('\n');
+  const toEx = (t) => String(t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const [native, en = '', note = ''] = l.split('|').map((x) => x.trim()); return { native, en, note }; });
+  const form = (g = {}) => h`<form data-gf>
+    <div class="grid grid-2" style="gap:0 12px"><label class="field"><span>Title *</span><input name="title" value="${g.title || ''}" required></label>
+    <label class="field"><span>Category *</span><select name="category">${cats.map((c) => h`<option value="${c.slug}" ${c.name === g.category ? raw('selected') : ''}>${c.parent ? `${c.parent} › ` : ''}${c.name}</option>`)}</select></label>
+    <label class="field"><span>Level</span><select name="level">${state.meta.levels.map((l) => h`<option ${l.code === g.level ? raw('selected') : ''}>${l.code}</option>`)}</select></label></div>
+    <label class="field"><span>Rule *</span><textarea name="rule">${g.rule || ''}</textarea></label>
+    <label class="field"><span>Nuances</span><textarea name="nuances">${g.nuances || ''}</textarea></label>
+    <label class="field"><span>Examples — one per line: ${langName()} sentence | English | note</span><textarea class="ta-input" name="examples">${exText(g.examples)}</textarea></label>
+    <label class="field"><span>Variations — blocks separated by a blank line; first line is the name, then example lines (sentence | English)</span><textarea class="ta-input" name="variations" style="min-height:120px">${(g.variations || []).map((v) => [v.name, ...v.examples.map((e) => `${e.native} | ${e.en}`)].join('\n')).join('\n\n')}</textarea></label>
+    <div data-err></div><button class="btn" type="submit">${g.id ? 'Save lesson' : 'Create lesson'}</button></form>`;
+  const read = (f) => { const d = Object.fromEntries(new FormData(f)); return { ...d, examples: toEx(d.examples), variations: String(d.variations || '').split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean).map((b) => { const [name, ...rest] = b.split('\n'); return { name: name.trim(), examples: toEx(rest.join('\n')) }; }) }; };
+  return {
+    html: h`<div class="btn-row" style="margin-bottom:10px"><button class="btn btn--bloom" data-new>Add ${langName()} grammar lesson</button>${state.meta.features.ai ? h`<button class="btn btn--cyan" data-gen>Generate with AI</button>` : ''}${['published', 'pending', 'rejected'].map((s) => h`<a class="btn btn--small ${s === st ? '' : 'btn--ghost'}" href="/admin/grammar?status=${s}">${s}</a>`)}</div>
+    <div class="table-wrap"><table class="tbl"><tr><th>Title</th><th>Category</th><th>Level</th><th>Source</th><th>Status</th><th></th></tr>${list.items.map((g) => h`<tr><td>${g.title}</td><td class="small">${g.category}</td><td>${g.level}</td><td class="small">${g.source}</td><td>${status(g.status)}</td><td><div class="btn-row"><button class="btn btn--small btn--ghost" data-edit="${g.id}">Edit</button>${g.status !== 'published' ? h`<button class="btn btn--small btn--green" data-st="${g.id}:published">Publish</button>` : h`<button class="btn btn--small btn--ghost" data-st="${g.id}:pending">Unpublish</button>`}<button class="btn btn--small btn--danger" data-del="${g.id}">Delete</button></div></td></tr>`)}</table></div>`,
+    mount(root, reload) {
+      const open = (g) => modal({ title: g ? 'Edit grammar lesson' : 'New grammar lesson', body: form(g || {}), onMount(el, close) {
+        el.querySelector('.modal')?.style.setProperty('width', 'min(860px,100%)');
+        el.querySelector('[data-gf]').addEventListener('submit', async (e) => { e.preventDefault(); try { const body = read(e.target); if (g) await api(`/admin/grammar/${g.id}`, { method: 'PATCH', body }); else await api('/admin/grammar', { method: 'POST', body }); close(); toast('Lesson saved.'); reload(); } catch (x) { el.querySelector('[data-err]').innerHTML = String(errorsBox(x)); } });
+      } });
+      root.querySelector('[data-new]').addEventListener('click', () => open(null));
+      root.querySelector('[data-gen]')?.addEventListener('click', async (e) => { e.target.disabled = true; toast('Generating…'); const j = await api('/admin/jobs', { method: 'POST', body: { type: 'grammar' } }).catch((x) => ({ status: 'failed', error: x.message })); toast(j.status === 'succeeded' ? 'Lesson generated — waiting for review.' : `Failed: ${j.error}`, j.status === 'succeeded' ? 'ok' : 'bad'); reload(); });
+      root.addEventListener('click', async (e) => {
+        const ed = e.target.closest('[data-edit]'); const s = e.target.closest('[data-st]'); const d = e.target.closest('[data-del]');
+        try {
+          if (ed) open(await api(`/admin/grammar/${ed.dataset.edit}`));
+          if (s) { const [id, v] = s.dataset.st.split(':'); await api(`/admin/grammar/${id}/status`, { method: 'POST', body: { status: v } }); reload(); }
+          if (d && await confirmDialog({ text: 'Delete this grammar lesson and its bookmarks?' })) { await api(`/admin/grammar/${d.dataset.del}`, { method: 'DELETE' }); reload(); }
+        } catch (x) { toast(x.message, 'bad'); }
+      });
+      if (editing) open(editing);
+    },
+  };
+}
+
+async function topicsTab() {
+  const [a, queue] = await Promise.all([api('/admin/daily-topics'),api('/admin/daily-topic-automation')]);
+  const endpoint='/admin/daily-topic-automation';
+  const languages=state.meta.languages;
+  return {
+    html: h`<p class="small muted">One shared microtopic per date in ${queue.timezone}. All four language lists must pass review and contain 20–50 entries before publication.</p>
+    <form data-dt class="stack" style="max-width:640px;gap:6px">
+      <div class="grid grid-2" style="gap:0 12px"><label class="field"><span>Future date</span><input name="date" type="date" required></label>
+      <label class="field"><span>Category</span><input name="category" placeholder="Beauty"></label></div>
+      <label class="field"><span>Microtopic title</span><input name="title" required maxlength="180"></label>
+      <label class="field"><span>Communicative goal</span><input name="goal" required maxlength="800"></label>
+      <button class="btn" type="submit">Assign future topic</button></form>
+    <h3>Dates awaiting publication</h3><p class="small muted">${queue.queued} language lists remaining.</p>
+    ${queue.dates.length?h`<ul class="list">${queue.dates.map(d=>h`<li class="spread"><span>${d.topic_date} · ${d.title} · ${d.status}</span><div class="btn-row"><button class="btn btn--small" data-review-day="${d.id}">Review</button><button class="btn btn--small btn--green" data-publish-day="${d.id}">Publish</button></div></li>`)}</ul>`:h`<p class="small muted">No due dates are waiting.</p>`}
+    ${queue.jobs.some(j=>j.status==='failed')?h`<ul class="list">${queue.jobs.filter(j=>j.status==='failed').map(j=>h`<li class="spread"><span>${j.topic_date} · ${languages.find(l=>l.code===j.language_code)?.name} · ${j.error_summary}</span><button class="btn btn--small" data-retry-day="${j.date_id}:${j.language_code}">Retry list</button></li>`)}</ul>`:''}
+    <h3>Published archive</h3><div class="table-wrap"><table class="tbl"><tr><th>Date</th><th>Title</th><th>Entries</th></tr>${a.items.map((t) => h`<tr><td>${t.date}</td><td><a href="/daily-topic/${t.id}">${t.title}</a>${t.legacy?' · legacy':''}</td><td>${t.wordCount}</td></tr>`)}</table></div>`,
+    mount(root, reload) {
+      root.querySelector('[data-dt]').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const d = Object.fromEntries(new FormData(e.target));
+        try {
+          const out=await api(endpoint+'/override', { method: 'POST', body: d });
+          toast('Future topic assigned.'); await review(out.id);
+        } catch (x) { toast(x.message + (x.details?.problems ? `: ${x.details.problems.join('; ')}` : ''), 'bad'); }
+      });
+      const review=async id=>{
+        const day=await api(endpoint+'/'+id);
+        modal({title:day.title,body:h`<form data-edit-set class="stack">
+          <label class="field"><span>Language</span><select name="lang">${languages.map(l=>h`<option value="${l.code}">${l.name}</option>`)}</select></label>
+          <label class="field"><span>Reviewed expressions, one per line</span><textarea name="entries" rows="12" spellcheck="false"></textarea></label>
+          <p class="small muted">Native expression | English meaning | Level | Word class | Construction | Base lemma | Native example | English example. Construction: word, adj_noun, verb_object, noun_verb, adv_verb, or common.</p>
+          <div data-err></div><button class="btn" type="submit">Save reviewed list</button></form>`,onMount(el,close){
+          const f=el.querySelector('[data-edit-set]');
+          const show=()=>{f.elements.entries.value=(day.languages.find(l=>l.language_code===f.elements.lang.value)?.entries||[]).map(e=>[e.native,e.english,e.level,e.pos,e.construction,e.lemma,e.example,e.example_en].map(x=>x||'').join(' | ')).join('\n');};
+          f.elements.lang.value=state.lang;show();f.elements.lang.addEventListener('change',show);
+          f.addEventListener('submit',async e=>{
+            e.preventDefault();
+            const entries=f.elements.entries.value.split(/\r?\n/).filter(line=>line.trim()).map(line=>{
+              const [native,english,level,pos,construction,lemma,example,example_en]=line.split('|').map(x=>x.trim());return {native,english,level,pos,construction,lemma,example,example_en};
+            });
+            try{const r=await api(endpoint+'/'+id+'/entries',{method:'PUT',body:{lang:f.elements.lang.value,entries}});close();toast(r.ready?'Reviewed list is ready.':'Draft saved; more entries are needed.');reload();}
+            catch(x){f.querySelector('[data-err]').innerHTML=String(errorsBox(x));}
+          });
+        }});
+      };
+      root.addEventListener('click',async e=>{
+        const button=e.target.closest('[data-review-day],[data-publish-day],[data-retry-day]');if(!button)return;
+        try{
+          if(button.dataset.reviewDay)return await review(button.dataset.reviewDay);
+          if(button.dataset.retryDay){const [dateId,lang]=button.dataset.retryDay.split(':');await api(endpoint+'/retry',{method:'POST',body:{dateId:Number(dateId),lang}});toast('Language list queued for retry.');}
+          if(button.dataset.publishDay){const r=await api(endpoint+'/publish',{method:'POST',body:{dateId:Number(button.dataset.publishDay)}});toast(r.published?'Daily Topic published.':'The date is not ready to publish.',r.published?'ok':'bad');}
+          reload();
+        }catch(x){toast(x.message,'bad');}
+      });
+    },
   };
 }

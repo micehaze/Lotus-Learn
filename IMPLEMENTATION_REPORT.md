@@ -1,49 +1,53 @@
-# Implementation & verification report
+# Implementation & verification report — multilingual extension
 
-**Verification run (this build):** `npm test` → 39/39 passed · `npm run test:e2e` → 14/14 browser flows passed, 0 page errors · `npm run check` → all checks passed. Screenshots of every major screen at desktop, tablet and mobile sizes are in `tests/e2e/screenshots/`.
+**Verification run:** `npm test` → **50/50** (39 original + 11 extension tests) · `npm run test:e2e` → **17/17** browser flows, 0 page errors · `npm run check` → passed. Screenshots of all four themes and every new page: `tests/e2e/screenshots/` (03, 25–30).
 
-Status key: **Done** = implemented and exercised by automated tests and/or the browser run · **Done (credentials)** = implemented and tested against mocked providers, not against the live third-party API · **Partial** · **Not done**.
+## Database migration performed
 
-## PRD sections
+`server/migrations/002_multilingual.sql` (additive, runs inside a transaction; `db.js` writes a `VACUUM INTO` backup first when the database already has data):
 
-| § | Area | Status | Notes / evidence |
-| --- | --- | --- | --- |
-| 1 | Product modules | Done | All ten modules present and connected through shared models and navigation. |
-| 2 | Levels A1–C2, register | Done | Levels are admin-editable/addable; learners change level in Settings; recommendations prioritise level but browsing covers all. Every entry carries a register (common/spoken/formal/literary/colloquial) shown as a label. |
-| 3.1–3.2 | Vocabulary library & entry fields | Done | All fields stored incl. pronunciation, Hindi/Malayalam, collocations, synonyms, antonyms, register, dialect notes, verb forms. **Library size is 52 seed words** — growth relies on AI generation, CSV/JSON import or manual entry. |
-| 3.3 | Daily recommendations | Done | Deterministic per user per day; level + preferred topics; skips collected and already-rewarded words (tested). |
-| 3.4 | Content management | Done (AI: credentials) | Add/edit/delete, lists, topics, levels, CSV/JSON import with per-row report, AI generation → review queue. |
-| 4 | Video library | Done / Done (credentials) | Official privacy-enhanced YouTube embed, metadata, filters, favourites, watched, authorised transcripts with tap-to-save words, admin add-by-link with review. Discovery (search → Tamil-signal filter → duration filter → classification → dedupe → review) tested with a mocked YouTube API. **No videos are seeded** because video IDs could not be verified offline. |
-| 5 | Reading library | Done | 3 original stories (A1, A2, B1 spoken dialogue); transliteration & translation toggles, per-paragraph translation, tap-to-look-up (incl. inflected forms), save words/phrases, saved progress. Licence/citation required for public-domain and openly licensed texts. AI stories (credentials) are validated and held for approval. |
-| 6 | Dictionary | Done | EN/HI/ML → Tamil, Tamil and romanised-Tamil input, exact/partial/fuzzy/phrase/verb-form matching, suggestions, synonyms, collocations, examples, forms; AI suggestions clearly labelled unverified (credentials). **Partial:** "related expressions" field exists but seed data rarely fills it. |
-| 7 | Accounts | Done | Email registration, login/logout, reset (single-use, 1 h, signs out other sessions), profile picture, preferences, change password, delete account (cascade). Interface language: only English exists (preference stored). Reset emails: console by default; Resend adapter is **untested live**. |
-| 8 | Collections | Done | Unlimited collections, admin-configurable word limit (default 1,000, tested at 3), cards with lotus, confirm-before-delete, edit, search within/across collections. |
-| 9 | Word selection | Done | Server-persisted selection across collections, blue-star cards, select-all, duplicate prevention by vocabulary identity, 1–50 limit with clear message and **no silent trimming** (tested), preview with expected questions. |
-| 10 | Learning engine | Done | Four exercise types; 3/2/2/3 plan with reallocation when contexts are missing; distractors exclude synonyms/shared meanings and match inflection; mixed order (no back-to-back word while ≥2 remain); only correct answers count; per-answer tracking (word, question, type, answer, correctness, timestamp, attempt #); resumable; idempotent submits; completion screen. |
-| 11 | Lotus system | Done | One lotus per word per local calendar day (DB-unique), five days → full bloom, later reviews still counted, original pixel stages 0–5 + bloom animation. |
-| 12 | Statistics | Done | Lesson histogram (correct vs incorrect per word), accuracy, time, strongest/weakest, per-type table; collection radar with filter + pagination (12 axes/page) and summary; global collection radar with selection; 30-day history, streaks, accuracy by exercise type. |
-| 13 | Automation | Done (credentials) | Scheduler with configurable daily targets (vocab lists, 2–4 videos, 3–5 stories), idempotent job keys (re-running never duplicates — tested), job history, failed jobs + retry, manual triggers, validation, review queue. |
-| 14 | Architecture | Partial (deviation) | Modular services as required; **not** Next.js/PostgreSQL/Supabase/Recharts — see README "deviations". |
-| 15 | Database | Done | Normalised schema with FKs, indexes, unique constraints. RLS replaced by enforced ownership predicates (SQLite). |
-| 16 | Design & UX | Done | Responsive (desktop/tablet/mobile verified), loading/empty/error states, confirmations, Tamil font stack, real Tamil on every screen. |
-| 17 | Security | Done | scrypt passwords, hashed session tokens, HttpOnly SameSite cookies, CSRF header + origin check, CSP and security headers, input validation, rate limits (auth, AI, jobs), server-side admin checks, keys server-side only, `npm run backup`. Rate limiting is in-memory (single process). |
-| 18 | Phases 1–5 | Done | — |
-| 18 | Phase 6 | Partial | Mobile UX, accessibility basics and testing done. **Not done:** offline caching (IndexedDB/service worker), production deployment setup, measured performance profiling on real devices. |
-| 19 | Acceptance criteria | Done | Each criterion is covered by an integration test or e2e step (see below). "Synchronises across devices" holds because all progress is server-side; not tested on two physical devices. |
-| 20 | Future languages | Partial | Language-specific columns (Tamil/Hindi/Malayalam) and Tamil script utilities; adding a new target language needs schema and utility work. |
-| 21 | Visual direction | Done | Ref 1 → chunky outlined italic logo + lagoon/waterfall scene in cyan & salmon; Ref 2 → bevelled window frames in five palette variants; Ref 3 → profile-left / content-right logged-in home; Refs 4–8 → six original pixel scenes (lagoon, cascade, fern forest, river, dusk beach, rainbow valley); Ref 9–12 → pixel hibiscus/frangipani/lotus corner ornaments, sprig button ornaments, coconut empty state, lotus stages; Refs 13–14 → shared colour tokens. |
-| 22 | Animation | Done | Moving water with ripples, drifting current, twinkling reflections confined to its mask; waterfalls; swaying palms/ferns/leaves/hibiscus with staggered timing; bobbing lotus pads; gentle parallax; button, window, card-selection, answer, progress, lotus-bloom and chart animations; pauses when the tab is hidden; reduced-motion and user "off" switch verified. The two Pinterest motion references **could not be opened** (no network); the water follows §22.2's written behaviour. |
+* New tables: `languages`, `user_language_profiles` (per-language level, topics, goal, transliteration, onboarding), `content_state`, `word_senses`, `sense_relations`, `sense_collocations`, `sense_examples`, `sense_equivalents`, `word_homonyms`, `grammar_categories`, `grammar_lessons`, `grammar_progress`, `learning_notes`, `daily_topics`, `daily_topic_words`.
+* New columns: `lang` on vocabulary, lists, collections, collection words, word mastery, lotus rewards, sessions, stories, videos, jobs; `user_profiles.active_language`; `vocabulary.concept_key` (shared meaning across languages) and `definition`; `videos.url`.
+* Legacy rows tagged `ta`; Tamil profiles copied into `user_language_profiles`; vocabulary duplicate keys now include the language; one-active-session index is now per language; `content_jobs` rebuilt (history kept) to allow grammar / daily-topic / enrichment jobs.
+* Start-up backfill mirrors each legacy entry into sense 1 of the sense model (source `legacy`), and extends the three short Tamil seed stories to 20+ sentences in place. Reading progress is kept.
+* Verified by a test that builds a pre-extension database with mastery, rewards, sessions and jobs, migrates it, and checks every value survived and the backup exists.
 
-## Acceptance criteria → evidence
+## Requirements → status
 
-Register & choose level (e2e onboarding) · browse by level/topic/POS (dictionary test) · EN/HI/ML search (dictionary test + e2e) · unlimited collections & 1,000 limit (configurable-limit test) · manual create/edit words (collections test + e2e) · save from stories/transcripts (reader e2e; transcript path uses the same component) · multi-collection selection & select-all (selection test + e2e) · ≤50 words (selection test) · 10 correct per word, mixed order, wrong answers don't count (learning tests) · resume (learning test) · one lotus per day, five → bloom (lotus test with simulated clock) · histogram / radar / global radar (e2e screenshots 11–13, stats assertions) · automated video & reading additions (mocked automation test) · AI validated before publication (mocked automation test) · desktop + mobile (e2e) · design follows references (screenshots).
+| PRD § | Requirement | Status / evidence |
+| --- | --- | --- |
+| 2.1–2.2 | Four languages; switcher in profile & navigation | Done. Top-bar switcher + `PUT /api/profile/language`; theme, scenes, content, collections and stats switch without logout (e2e) |
+| 2.3 | Independent progress for every data type; sessions keep their language; no merging of identically spelled words | Done; tests cover levels, collections, selection, mastery, stats, notes, grammar progress, concurrent per-language lessons. Mastery is keyed by entry id, never by spelling |
+| 2.4 | Independent A1–C2 per language | Done |
+| 3.1 | Both directions per language, swap, Unicode, transliteration, typos, multiword, forms, multiple senses | Done (test per language). Cross-script and Hindi input map through shared meanings |
+| 3.2 | Entry structure, collapsible sections, primary translation first | Done (`/dictionary/entry/:id`) |
+| 3.3–3.4 | 10–15 synonyms / antonyms with nuance; honest when fewer | **Partial by design.** Model, UI, AI pipeline and honesty notes done. Checked seed data: rich nuance sets only for காதல், மகிழ்ச்சி, பெரிய; most entries have 0–2. No padding is done |
+| 3.5–3.6 | Three structured collocation types + common expressions | Done (model, UI, labelled constructions). Seed counts are small; legacy collocations appear as "common" |
+| 3.7 | Cross-language equivalents incl. Hindi, sense-preserving | Done for the 31 shared concepts in all languages (linked by concept key) + Hindi |
+| 3.8 | Homophones/homonyms only when legitimate | Done; one verified seed (படி). Section is hidden otherwise |
+| 3.9 | 5–7 examples with highlight & transliteration | Model/UI done; seed entries have 1–4 checked examples; the gap is stated on each entry |
+| 3.10 | Validation, caching, verified vs unreviewed | Done: AI enrichment stored permanently, never regenerated (job key), script-validated, hidden until approved |
+| 4 | Per-language reading, 3–5/day, ≥ 20 sentences, metadata, durability, catch-up | Done (scheduler + validation + tests). **Daily growth needs an AI key** and admin approval (or the opt-in auto-publish setting). Seeds: 3 Tamil + 1 per other language |
+| 5 | Per-language videos, 3–5/day, dedupe, external links | Done; **discovery needs `YOUTUBE_API_KEY`** (tested with a mocked API, not live). No seed videos |
+| 6 | Daily Topic replaces Daily Words, 60–80 related words, archive, save/study | Done. **Current library is far below 60 words per topic** (e.g. Telugu "Nature" has 6). The topic shows the shortfall and is topped up only with approved words; AI fill jobs are queued when a key is set |
+| 7 | Grammar for each language; rule/nuances/variations/examples; 3–5/day; browse, search, filter, bookmark, studied | Done. 24 checked seed lessons (Tamil 9, Malayalam, Kannada and Telugu 5 each); daily growth needs AI |
+| 8 | Learning Notes calendar per language | Done: day/month/year navigation, create, edit, append, rewrite, delete with confirmation, search, autosave, simple formatting |
+| 9 | Central lifecycle, targets, local scheduler, catch-up, idempotency, retries, notify tabs, admin controls per language | Done (tests: catch-up, concurrency, restart, SSE; e2e: live update in an open tab) |
+| 10 | Four themes from references; consistent architecture; smooth switching; animations; reduced motion | Done for Tamil & Malayalam from the images; Kannada & Telugu from the written brief only (no images supplied). Verified by screenshots |
+| 11 | Schema, FKs, uniqueness, indexes, authorization, safe migration + backup | Done |
+| 12 | Navigation, responsive, four scripts | Done. Fonts: Noto Sans Tamil/Malayalam/Kannada/Telugu (Google Fonts) with OS fallbacks |
+| 13 | Automated tests | Done (see top). Visual review done manually from screenshots |
 
 ## Needs from you
 
-* A native Tamil speaker to review the 52 seed words and 3 stories (Admin → Vocabulary → "Mark native-reviewed").
-* Optional keys: `ANTHROPIC_API_KEY` (or OpenAI), `YOUTUBE_API_KEY`, `RESEND_API_KEY`. These integrations are implemented and tested against mocks but **have not been exercised against the live services**.
-* For public hosting: HTTPS with `SECURE_COOKIES=true`, `PUBLIC_URL`, `SEED_DEMO_USER=false`, and a scheduled `npm run backup`.
+* **Native-speaker review** of all seed content (Admin → Vocabulary / Grammar / Stories); everything is labelled *editor* (AI-assisted), not verified.
+* **Credentials** for growth: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (stories, grammar, vocabulary, Daily-Topic fill, dictionary enrichment) and `YOUTUBE_API_KEY` (videos). `RESEND_API_KEY` optional for reset emails. Integrations are tested against mocks only.
+* **Kannada and Telugu reference images**, if you want those themes derived from images instead of the written brief.
 
 ## Known limitations
 
-Single-process server (in-memory rate limiter and scheduler lock); no offline mode; English-only interface; seed library is small until AI/import is used; Google Fonts (Noto Sans Tamil, Pixelify Sans) load from the internet with local fallbacks; the stack differs from the preferred Next.js/PostgreSQL.
+* Seed volume is far below the 10–15 / 60–80 targets; the app states the gaps rather than fabricating.
+* Platform-wide daily content uses the server's UTC date; lotus rewards use each learner's time zone.
+* In this build sandbox Telugu rendered with a fallback bitmap font in screenshots; real browsers load Noto Sans Telugu.
+* Single-process server (in-memory rate limiter and scheduler lock); no offline mode; English-only interface.
+* Stack differs from the original preference (Node + SQLite instead of Next.js + PostgreSQL), as explained in the README.

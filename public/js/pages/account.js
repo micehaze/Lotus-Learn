@@ -1,4 +1,4 @@
-import { h, raw, api, state, applyPrefs, win, lotus, level, fmtDate, toast, errorsBox, confirmDialog, esc } from '../core.js';
+import { h, raw, api, state, applyPrefs, win, lotus, level, fmtDate, toast, errorsBox, confirmDialog, esc, langName } from '../core.js';
 import { renderShell } from '../app.js';
 import { refreshScene } from '../scene.js';
 
@@ -26,11 +26,11 @@ export async function profile() {
         ${win({ title: 'About you', corner: 'frangipani', body: h`<form data-prof>
           <label class="field"><span>Display name</span><input type="text" name="displayName" value="${p.displayName}" maxlength="60" required></label>
           <label class="field"><span>About me</span><textarea name="bio" maxlength="400">${p.bio}</textarea></label>
-          <dl class="kv"><dt>Email</dt><dd>${p.email}</dd><dt>Level</dt><dd>${level(p.level)} <a class="small" href="/settings">change</a></dd><dt>Member since</dt><dd>${fmtDate(p.memberSince)}</dd></dl>
+          <dl class="kv"><dt>Email</dt><dd>${p.email}</dd><dt>Learning now</dt><dd>${langName(p.activeLanguage)} ${level(p.level)} <a class="small" href="/settings">change</a></dd>${state.meta.languages.filter((l) => p.languages[l.code]?.started && l.code !== p.activeLanguage).map((l) => h`<dt>${l.name}</dt><dd>${level(p.languages[l.code].level)}</dd>`)}<dt>Member since</dt><dd>${fmtDate(p.memberSince)}</dd></dl>
           <div data-err></div><button class="btn" type="submit" style="margin-top:12px">Save profile</button></form>` })}
         ${win({ title: 'Progress', variant: 'green', corner: 'lotus', body: h`<div class="statgrid"><div class="stat"><b>${o.streak.current}</b><span>day streak</span></div><div class="stat"><b>${o.totals.wordsStudied}</b><span>words studied</span></div><div class="stat"><b>${o.totals.lotuses}</b><span>lotuses</span></div><div class="stat"><b>${o.totals.bloomed}</b><span>full blooms</span></div></div>
           <div class="lotus-legend" style="margin-top:12px">${[1, 2, 3, 4, 5].map((n) => h`<span>${lotus(n, 'sm')} ${n === 5 ? 'full bloom' : `${n} day${n > 1 ? 's' : ''}`}</span>`)}</div>` })}
-        ${win({ title: 'Reading history', variant: 'orange', body: hist.length ? h`<ul class="list">${hist.map((r) => h`<li class="spread"><a class="ta" lang="ta" href="/reading/${r.id}">${r.title}</a><span class="small">${r.progress}%</span></li>`)}</ul>` : h`<p class="muted">No stories read yet. <a href="/reading">Open the reading library</a>.</p>` })}
+        ${win({ title: 'Reading history', variant: 'orange', body: hist.length ? h`<ul class="list">${hist.map((r) => h`<li class="spread"><a class="ta" lang="${state.lang}" href="/reading/${r.id}">${r.title}</a><span class="small">${r.progress}%</span></li>`)}</ul>` : h`<p class="muted">No stories read yet. <a href="/reading">Open the reading library</a>.</p>` })}
       </div></div>`,
     mount(root) {
       const err = root.querySelector('[data-err]');
@@ -55,8 +55,9 @@ export async function settings({ navigate }) {
     title: 'Settings', scene: 'valley',
     html: h`<div class="page-head"><div><h1>Settings</h1></div></div>
     <div class="grid grid-2">
-      ${win({ title: 'Learning', variant: 'salmon', corner: 'lotus', body: h`<form data-learn>
-        <label class="field"><span>Tamil level</span><select name="level">${m.levels.map((l) => h`<option value="${l.code}" ${l.code === p.level ? raw('selected') : ''}>${l.code} · ${l.name}</option>`)}</select><small>Recommendations favour this level; you can still explore all levels.</small></label>
+      ${win({ title: `${langName()} learning settings`, variant: 'salmon', corner: 'lotus', body: h`<form data-learn>
+        <p class="small muted">These settings apply to ${langName()} only. Switch language at the top to change another language.</p>
+        <label class="field"><span>${langName()} level</span><select name="level">${m.levels.map((l) => h`<option value="${l.code}" ${l.code === p.level ? raw('selected') : ''}>${l.code} · ${l.name}</option>`)}</select><small>Recommendations favour this level; you can still explore all levels.</small></label>
         <label class="field"><span>Daily goal (correct answers)</span><input type="number" name="dailyGoal" min="1" max="500" value="${p.dailyGoal}"></label>
         <label class="check"><input type="checkbox" name="showTransliteration" ${p.showTransliteration ? raw('checked') : ''}> Show transliteration under Tamil text</label>
         <fieldset style="border:0;padding:0;margin:14px 0"><legend class="label">Preferred topics</legend><div class="chips">${m.topics.map((t) => h`<label class="chip"><input type="checkbox" name="topics" value="${t.slug}" ${p.preferredTopics.includes(t.slug) ? raw('checked') : ''}>${t.name}</label>`)}</div></fieldset>

@@ -34,56 +34,46 @@ export function createMailer(config, logger = console) {
   };
 }
 
-// ------------------------------------------------------------------ AI
+// ------------------------------------------------------------------ AI (local only)
+// LotusLearn uses NO paid or cloud AI. All generation runs on this computer through Ollama
+// (https://ollama.com) with an open-weight model chosen by local-dictionary/setup_local_dictionary.py.
 export function createAI(config, fetchImpl = globalThis.fetch) {
   const a = config.ai;
-  const provider = a.provider === 'anthropic' && a.anthropicKey ? 'anthropic' : a.provider === 'openai' && a.openaiKey ? 'openai' : 'none';
-  const configured = provider !== 'none';
+  const url = String(a.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  const model = a.ollamaModel || '';
+  const configured = a.provider === 'ollama' && !!model;
 
-  async function complete({ system, prompt, maxTokens = 2000, temperature = 0.4 }) {
-    if (!configured) throw new ServiceUnavailable('ai', 'No AI provider is configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.');
+  async function complete({ system, prompt, maxTokens = 2000, temperature = 0.4, json = false, schema, contextTokens = 8192 }) {
+    if (!configured) throw new ServiceUnavailable('ai', 'No local model configured. Install Ollama and set OLLAMA_MODEL (see local-dictionary/README.md).');
     let res;
     try {
-      if (provider === 'anthropic') {
-        res = await fetchImpl('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'x-api-key': a.anthropicKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: a.anthropicModel, max_tokens: maxTokens, temperature, system, messages: [{ role: 'user', content: prompt }] }),
-          signal: AbortSignal.timeout(a.timeoutMs),
-        });
-      } else {
-        res = await fetchImpl(`${a.openaiBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${a.openaiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ model: a.openaiModel, max_tokens: maxTokens, temperature, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
-          signal: AbortSignal.timeout(a.timeoutMs),
-        });
-      }
+      res = await fetchImpl(`${url}/api/generate`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, system, prompt, stream: false, think: false, ...(json ? { format: schema || 'json' } : {}), options: { temperature, num_predict: maxTokens, num_ctx: contextTokens } }),
+        signal: AbortSignal.timeout(a.timeoutMs),
+      });
     } catch (e) {
-      throw new ServiceUnavailable('ai', `AI provider unreachable: ${e.message}`, 'network_error');
+      throw new ServiceUnavailable('ai', `Local model (Ollama) unreachable at ${url}: ${e.message}`, 'network_error');
     }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new ServiceUnavailable('ai', `AI provider error ${res.status}: ${body.slice(0, 300)}`, res.status === 429 ? 'rate_limited' : 'upstream_error');
+      throw new ServiceUnavailable('ai', `Ollama error ${res.status}: ${body.slice(0, 300)}`, 'upstream_error');
     }
     const data = await res.json();
-    const text = provider === 'anthropic'
-      ? (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n')
-      : data.choices?.[0]?.message?.content || '';
-    if (!text) throw new ServiceUnavailable('ai', 'AI provider returned an empty response', 'empty_response');
-    return text;
+    if (!data.response) throw new ServiceUnavailable('ai', 'Local model returned an empty response', 'empty_response');
+    return data.response;
   }
 
   async function completeJSON(opts) {
-    const text = await complete({ ...opts, system: `${opts.system}\nRespond with JSON only. No prose, no markdown fences.` });
+    const text = await complete({ ...opts, json: true, system: `${opts.system}\nRespond with JSON only.` });
     const cleaned = text.replace(/```(?:json)?/g, '').trim();
     const start = cleaned.search(/[[{]/);
     const end = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
-    if (start < 0 || end < start) throw new ServiceUnavailable('ai', 'AI response did not contain JSON', 'bad_output');
-    try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { throw new ServiceUnavailable('ai', 'AI response JSON could not be parsed', 'bad_output'); }
+    if (start < 0 || end < start) throw new ServiceUnavailable('ai', 'Local model response did not contain JSON', 'bad_output');
+    try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { throw new ServiceUnavailable('ai', 'Local model JSON could not be parsed', 'bad_output'); }
   }
 
-  return { configured, provider, model: provider === 'anthropic' ? a.anthropicModel : provider === 'openai' ? a.openaiModel : null, complete, completeJSON };
+  return { configured, provider: configured ? 'ollama' : 'none', model: configured ? model : null, complete, completeJSON };
 }
 
 // ------------------------------------------------------------------ YouTube
@@ -109,19 +99,21 @@ export function parseISODuration(d) {
 }
 
 export function createYouTube(config, fetchImpl = globalThis.fetch) {
-  const key = config.youtubeApiKey;
-  const configured = !!key;
+  // The YouTube Data API is a Google Cloud API, which LotusLearn no longer uses (zero paid / cloud APIs).
+  // Automatic discovery is therefore off; administrators add videos by link. oEmbed (public, keyless) still fills titles.
+  const key = '';
+  const configured = false;
   async function call(endpoint, params) {
     if (!configured) throw new ServiceUnavailable('youtube', 'YouTube discovery needs YOUTUBE_API_KEY in .env.');
     const qs = new URLSearchParams({ ...params, key });
     let r;
-    try { r = await fetchImpl(`https://www.googleapis.com/youtube/v3/${endpoint}?${qs}`, { signal: AbortSignal.timeout(20000) }); }
+    try { r = null; throw new Error('YouTube Data API removed (Google Cloud)'); }
     catch (e) { throw new ServiceUnavailable('youtube', `YouTube unreachable: ${e.message}`, 'network_error'); }
     if (!r.ok) throw new ServiceUnavailable('youtube', `YouTube API error ${r.status}`, r.status === 403 ? 'quota_or_key' : 'upstream_error');
     return r.json();
   }
-  async function search(query, maxResults = 10) {
-    const data = await call('search', { part: 'snippet', q: query, type: 'video', maxResults: String(maxResults), relevanceLanguage: 'ta', videoEmbeddable: 'true', safeSearch: 'strict' });
+  async function search(query, maxResults = 10, lang = 'ta') {
+    const data = await call('search', { part: 'snippet', q: query, type: 'video', maxResults: String(maxResults), relevanceLanguage: lang, videoEmbeddable: 'true', safeSearch: 'strict' });
     return (data.items || []).map((it) => it.id?.videoId).filter(Boolean);
   }
   async function details(ids) {

@@ -1,8 +1,0 @@
-# All free / open source. No paid APIs.
-torch>=2.1            # CPU build is fine; install the CUDA/ROCm build from pytorch.org if you have a GPU
-transformers>=4.40,<5
-sentencepiece
-sacremoses
-huggingface_hub
-IndicTransToolkit     # AI4Bharat pre/post-processing for IndicTrans2 (MIT)
-psutil

@@ -3,11 +3,21 @@ import { bad, notFound, conflict, parseJSON, j, slugify } from '../util.js';
 export const DEFAULT_SETTINGS = {
   collection_word_limit: 1000,
   daily_vocab_lists: 1,
-  daily_videos_min: 2,
-  daily_videos_max: 4,
+  daily_videos_min: 3,
+  daily_videos_max: 5,
   daily_stories_min: 3,
   daily_stories_max: 5,
+  daily_grammar_min: 3,
+  daily_grammar_max: 5,
+  daily_topic_words_min: 20,
+  daily_topic_words_max: 36,
+  catchup_days: 7,
+  list_min_words: 40,
   auto_publish_videos: false,
+  auto_publish_validated: false,
+  auto_publish_topic_words: true,
+  show_ai_enrichment: true,
+  vocab_list_min_words: 40,
   automation_enabled: true,
 };
 export const SESSION_MAX_WORDS = 50;
@@ -56,6 +66,10 @@ export function createMetaService({ db }) {
     if (next.collection_word_limit < 1) throw bad('Collection limit must be at least 1');
     if (next.daily_videos_min > next.daily_videos_max) throw bad('Minimum daily videos cannot exceed the maximum');
     if (next.daily_stories_min > next.daily_stories_max) throw bad('Minimum daily stories cannot exceed the maximum');
+    if (next.daily_grammar_min > next.daily_grammar_max) throw bad('Minimum daily grammar lessons cannot exceed the maximum');
+    if (next.daily_topic_words_min > next.daily_topic_words_max) throw bad('Minimum daily topic words cannot exceed the maximum');
+    if (next.daily_topic_words_min < 20 || next.daily_topic_words_max > 50) throw bad('Daily Topic limits must stay within 20–50 entries.');
+    if (next.catchup_days < 1 || next.catchup_days > 31) throw bad('Catch-up window must be 1–31 days');
     db.tx(() => { for (const [k, v] of Object.entries(next)) db.run('INSERT INTO app_settings(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', k, j(v)); });
     return next;
   }

@@ -16,7 +16,7 @@
   --ok: #2E8B57; --bad: #D9483F;
   --font-ui: 'Pixelify Sans', 'Poppins', system-ui, sans-serif;
   --font-body: 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-ta: 'Noto Sans Tamil', 'Tamil Sangam MN', 'Latha', 'Nirmala UI', 'Vijaya', 'FreeSans', sans-serif;
+  --font-ta: 'Noto Sans Tamil', 'Noto Sans Malayalam', 'Noto Sans Kannada', 'Noto Sans Telugu', 'Tamil Sangam MN', 'Malayalam Sangam MN', 'Kannada Sangam MN', 'Telugu Sangam MN', 'Latha', 'Kartika', 'Tunga', 'Gautami', 'Nirmala UI', 'FreeSans', 'FreeSerif', sans-serif;
   --bevel-hi: #ffffff; --bevel-lo: rgba(11, 85, 96, .38);
   --drop: 4px 4px 0 rgba(18, 48, 58, .32);
   --radius: 0;
@@ -343,3 +343,160 @@ main#main:focus { outline: none; }
 @media (max-width: 720px) { .btn.menu-btn { display: inline-flex; } }
 .hero__lead { background: rgba(11, 85, 96, .72); padding: 10px 14px; border: 2px solid var(--line); box-shadow: 4px 4px 0 rgba(18,48,58,.35); text-shadow: none; }
 .win-open { animation-duration: 200ms; }
+
+
+/* ================================================================ LANGUAGE THEMES
+   One component system; each learning language swaps tokens, scenes and ornaments.
+   Tamil  → refs 1–8 (art), 9–10 (colour). Malayalam → refs 11–17 (art), 18–19 (colour).
+   Kannada / Telugu → written brief colours (no reference images were supplied).       */
+body { transition: background-color 500ms ease; }
+body[data-theme='ta'] {
+  --cyan: #1BACB2; --cyan-deep: #12868B; --cyan-ink: #0E5E62; --cyan-light: #B3DEE2; --cyan-pale: #E4F4F5;
+  --salmon: #E27396; --salmon-deep: #C24F78; --salmon-light: #EB9AB2; --salmon-pale: #EFCFE3;
+  --aqua: #76A846; --aqua-deep: #5C8A33; --coral: #F06936; --pink: #E44587; --orange: #F06936; --sun: #F3B5CF;
+  --line: #4A2340; --ink: #3A1F35; --ink-soft: #6E4A63; --paper: #FAFCF1; --paper-warm: #FDF3F7; --paper-sunk: #ECF2D8;
+  --bevel-lo: rgba(74, 35, 64, .32); background: #EFCFE3;
+  --deco-corner: url('/art/ui/jasmine-corner.png'); --deco-w: 64px; --deco-h: 56px; --deco-x: -34px; --deco-y: -32px;
+}
+body[data-theme='ml'] {
+  --cyan: #24A9B8; --cyan-deep: #0B6D6E; --cyan-ink: #0B4F50; --cyan-light: #89FAF6; --cyan-pale: #E2F7F4;
+  --salmon: #63C48E; --salmon-deep: #399E5A; --salmon-light: #A7D76F; --salmon-pale: #DFF2E4;
+  --aqua: #A7D76F; --aqua-deep: #7FB04A; --coral: #E0705A; --pink: #51B8B5; --orange: #DDE88E; --sun: #DDE88E;
+  --line: #26532B; --ink: #1D3B22; --ink-soft: #4C6B52; --paper: #F3FBF7; --paper-warm: #F7FCF2; --paper-sunk: #E3F2EA;
+  --bevel-lo: rgba(38, 83, 43, .32); background: #DCE3E0;
+  --deco-corner: url('/art/ui/white-corner.png'); --deco-w: 48px; --deco-h: 32px; --deco-x: -22px; --deco-y: -18px;
+}
+body[data-theme='kn'] {
+  --cyan: #2F6156; --cyan-deep: #1F453D; --cyan-ink: #183A33; --cyan-light: #6FA89B; --cyan-pale: #E2EFEB;
+  --salmon: #F85726; --salmon-deep: #C51605; --salmon-light: #FD9029; --salmon-pale: #FDE3D2;
+  --aqua: #6C993F; --aqua-deep: #437826; --coral: #EB3031; --pink: #C51605; --orange: #FD9029; --sun: #FD9029;
+  --line: #404B1E; --ink: #2E2412; --ink-soft: #5E5233; --paper: #FFF9F0; --paper-warm: #FFF1E4; --paper-sunk: #F3E6D4;
+  --bevel-lo: rgba(64, 75, 30, .32); background: #7A2A1E;
+  --deco-corner: url('/art/ui/frangipani-corner-anim.png'); --deco-w: 44px; --deco-h: 44px; --deco-x: -20px; --deco-y: -20px;
+}
+body[data-theme='te'] {
+  --cyan: #2E9E8A; --cyan-deep: #1E7A6A; --cyan-ink: #1E6B5E; --cyan-light: #A8E8D9; --cyan-pale: #E6F8F3;
+  --salmon: #F7B720; --salmon-deep: #D08A00; --salmon-light: #FEE08E; --salmon-pale: #FFF6B7;
+  --aqua: #C1D653; --aqua-deep: #9AB13A; --coral: #F28C6A; --pink: #F9A88A; --orange: #F7A21B; --sun: #F3F871;
+  --line: #7A4B12; --ink: #4A2E0A; --ink-soft: #7A5A2E; --paper: #FFFDF4; --paper-warm: #FFF8E0; --paper-sunk: #FFF1C2;
+  --bevel-lo: rgba(122, 75, 18, .3); background: #FEE08E;
+  --deco-corner: url('/art/ui/mango-corner.png'); --deco-w: 56px; --deco-h: 48px; --deco-x: -26px; --deco-y: -28px;
+}
+body[data-theme] .win[data-corner]::before {
+  background: var(--deco-corner) 0 0 / calc(var(--deco-w) * 4) var(--deco-h) no-repeat; width: var(--deco-w); height: var(--deco-h);
+  left: var(--deco-x); top: var(--deco-y); --fw: var(--deco-w); animation: sway4 3.6s step-end infinite;
+}
+body[data-theme] .win[data-corner] > .win__bar { padding-left: 34px; }
+/* Malayalam borders: bunches of bananas hanging below the title bar (ref 17) */
+body[data-theme='ml'] .win[data-corner-br]::after { background: url('/art/ui/banana-hang.png') 0 0 / 128px 48px no-repeat; width: 32px; height: 48px; right: 46px; top: 34px; bottom: auto; transform: none; --fw: 32px; animation: sway4 4.2s step-end infinite; }
+body[data-theme='ta'] .win[data-corner-br]::after { background: url('/art/ui/jasmine-corner.png') 0 0 / 256px 56px no-repeat; width: 64px; height: 56px; right: -30px; bottom: -26px; transform: scaleX(-1); --fw: 64px; animation: sway4 4s step-end infinite; }
+body[data-theme='kn'] .win[data-corner-br]::after { background: url('/art/ui/frangipani-corner-anim.png') 0 0 / 176px 44px no-repeat; width: 44px; height: 44px; right: -18px; bottom: -18px; transform: none; --fw: 44px; animation: sway4 3.8s step-end infinite; }
+body[data-theme='te'] .win[data-corner-br]::after { background: url('/art/ui/mango-corner.png') 0 0 / 224px 48px no-repeat; width: 56px; height: 48px; right: -22px; bottom: -30px; transform: scaleX(-1); --fw: 56px; animation: sway4 4.4s step-end infinite; }
+body[data-theme='kn'] .topbar { background: linear-gradient(90deg, rgba(47,97,86,.95), rgba(197,22,5,.92) 55%, rgba(253,144,41,.92)); }
+body[data-theme='te'] .topbar { background: linear-gradient(90deg, rgba(46,158,138,.94), rgba(247,183,32,.94) 60%, rgba(249,168,138,.92)); }
+body[data-theme='ta'] .topbar { background: linear-gradient(90deg, rgba(27,172,178,.94), rgba(235,154,178,.94) 55%, rgba(228,69,135,.92)); }
+body[data-theme='ml'] .topbar { background: linear-gradient(90deg, rgba(11,109,110,.95), rgba(36,169,184,.93) 50%, rgba(99,196,142,.93)); }
+body[data-theme='te'] .page-head h1, body[data-theme='te'] .page-head p { color: #FFF8E0; }
+.theme-switching #app { animation: theme-fade 420ms ease both; }
+@keyframes theme-fade { from { opacity: .55; filter: saturate(.6); } to { opacity: 1; filter: none; } }
+.sprite--rise { animation-name: sway4, sun-rise; animation-timing-function: step-end, ease-in-out; animation-direction: normal, alternate; }
+.sprite--sink { animation-name: sway4, sun-sink; animation-timing-function: step-end, ease-in-out; animation-direction: normal, alternate; }
+@keyframes sun-rise { from { translate: 0 8px; } to { translate: 0 -3px; } }
+@keyframes sun-sink { from { translate: 0 -3px; } to { translate: 0 8px; } }
+
+/* language switcher */
+.lang-switch { display: flex; gap: 2px; background: rgba(255,255,255,.18); padding: 2px; border: 2px solid var(--line); }
+.lang-switch button { font: 600 .95rem/1.2 var(--font-ta); padding: 4px 9px; border: 0; background: transparent; color: #fff; text-shadow: 1px 1px 0 var(--line); cursor: pointer; }
+.lang-switch button[aria-pressed='true'] { background: var(--paper); color: var(--ink); text-shadow: none; box-shadow: inset 0 -3px 0 var(--salmon-deep); }
+.lang-switch button:hover:not([aria-pressed='true']) { background: rgba(255,255,255,.25); }
+
+/* dictionary entry */
+.entry-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.dict-dir { display: flex; gap: 6px; align-items: end; }
+details.sec { border: 2px solid var(--line); background: var(--paper-warm); margin-top: 10px; }
+details.sec > summary { cursor: pointer; padding: 7px 12px; font-family: var(--font-ui); color: var(--line); background: var(--paper-sunk); list-style: none; display: flex; justify-content: space-between; gap: 8px; }
+details.sec > summary::after { content: '+'; font-weight: 700; } details.sec[open] > summary::after { content: '−'; }
+details.sec > div { padding: 10px 12px; }
+.rel { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px dotted var(--aqua-deep); }
+.rel:last-child { border-bottom: 0; }
+.badge-ai { font: .75rem var(--font-ui); background: #FFF0C9; border: 1px solid var(--orange); padding: 0 6px; }
+.eq-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.eq-grid > div { border: 2px solid var(--line); background: #fff; padding: 8px; }
+
+/* calendar (Learning Notes) */
+.cal { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.cal th { font: .85rem var(--font-ui); color: var(--line); padding: 4px; }
+.cal td { padding: 2px; }
+.cal button { width: 100%; aspect-ratio: 1.1; min-height: 38px; border: 2px solid var(--line); background: #fff; font: 600 .95rem var(--font-ui); color: var(--ink); cursor: pointer; position: relative; }
+.cal button:hover { background: var(--cyan-pale); }
+.cal button.other { opacity: .45; }
+.cal button.today { box-shadow: inset 0 0 0 2px var(--salmon-deep); }
+.cal button[aria-pressed='true'] { background: var(--salmon); }
+.cal button .dot { position: absolute; right: 4px; bottom: 4px; min-width: 14px; height: 14px; font-size: .65rem; line-height: 14px; background: var(--cyan-deep); color: #fff; }
+.note-card { border: 2px solid var(--line); background: #fff; padding: 10px; margin-bottom: 12px; }
+.note-card textarea { min-height: 140px; font-family: var(--font-ta), var(--font-body); }
+.note-preview { border-top: 1px dotted var(--aqua-deep); margin-top: 8px; padding-top: 8px; white-space: pre-wrap; }
+.save-state { font: .8rem var(--font-ui); color: var(--ink-soft); }
+.lesson-sec { margin-bottom: 14px; }
+.lesson-sec h3 { font-family: var(--font-ui); color: var(--line); }
+.tree a { text-decoration: none; } .tree a[aria-current] { font-weight: 700; color: var(--salmon-deep); }
+.tree ul { list-style: none; padding-left: 14px; margin: 2px 0 6px; }
+
+/* contrast fixes after theme review */
+.page-head p { display: inline-block; background: color-mix(in srgb, var(--line) 74%, transparent); padding: 3px 10px; text-shadow: none; }
+body[data-theme='kn'] .btn--cyan, body[data-theme='kn'] .btn--cyan:hover { color: #fff; --b-hi: #5F8F84; --b-hover: #3F7A6D; }
+body[data-theme='te'] { --cyan: #4CC9B0; --cyan-deep: #2E9E8A; }
+.lang-switch button { font-size: 1.02rem; }
+
+/* ================================================================ SECTION BACKGROUNDS & FLORAL ORNAMENTS
+   Scenes per section come from js/backgrounds.js. Ornaments: every button and every frame carries the
+   language's animated flowers. Tamil: lotus + hibiscus · Malayalam: coconut + blue lotus ·
+   Kannada: yellow + orange hibiscus · Telugu: marigold + banana. */
+#scene::after { background: linear-gradient(180deg, var(--veil-top, rgba(18, 40, 48, 0)) 0%, var(--veil-bottom, rgba(18, 40, 48, .18)) 100%); }
+.sprite--fall { animation-name: sway4, petal-fall; animation-timing-function: step-end, linear; animation-iteration-count: infinite, infinite; }
+@keyframes petal-fall { from { translate: -10px -40px; } to { translate: 30px 200px; } }
+body[data-theme='ta'] { --orn-a: url('/art/ui/orn-lotus.png'); --orn-b: url('/art/ui/orn-hibiscus.png'); }
+body[data-theme='ml'] { --orn-a: url('/art/ui/orn-bluelotus.png'); --orn-b: url('/art/ui/orn-coconut.png'); }
+body[data-theme='kn'] { --orn-a: url('/art/ui/orn-yhibiscus.png'); --orn-b: url('/art/ui/orn-ohibiscus.png'); }
+body[data-theme='te'] { --orn-a: url('/art/ui/orn-marigold.png'); --orn-b: url('/art/ui/orn-banana.png'); }
+body[data-theme] .btn { position: relative; overflow: visible; }
+body[data-theme] .btn::before, body[data-theme] .btn::after {
+  content: ''; position: absolute; width: 24px; height: 24px; pointer-events: none; z-index: 2; opacity: 1; transform: none;
+  background: var(--orn-a) 0 0 / 96px 24px no-repeat; image-rendering: pixelated; --fw: 24px; animation: sway4 2.8s step-end infinite;
+}
+body[data-theme] .btn::before { left: -11px; top: -12px; }
+body[data-theme] .btn::after { right: -10px; bottom: -11px; top: auto; left: auto; background-image: var(--orn-b); animation-duration: 3.4s; animation-delay: -1.2s; }
+body[data-theme] .btn--small::before, body[data-theme] .btn--small::after { width: 16px; height: 16px; background-size: 64px 16px; --fw: 16px; }
+body[data-theme] .btn--small::before { left: -7px; top: -8px; } body[data-theme] .btn--small::after { right: -6px; bottom: -7px; }
+body[data-theme] .win:not([data-corner])::before {
+  content: ''; position: absolute; left: -14px; top: -16px; width: 32px; height: 32px; z-index: 3; pointer-events: none;
+  background: var(--orn-a) 0 0 / 128px 32px no-repeat; image-rendering: pixelated; --fw: 32px; animation: sway4 3s step-end infinite;
+}
+body[data-theme] .win:not([data-corner-br])::after {
+  content: ''; position: absolute; right: -12px; bottom: -14px; width: 32px; height: 32px; z-index: 3; pointer-events: none; transform: none; top: auto;
+  background: var(--orn-b) 0 0 / 128px 32px no-repeat; image-rendering: pixelated; --fw: 32px; animation: sway4 3.6s step-end infinite; animation-delay: -1s;
+}
+body[data-theme] .win__bar::after {
+  content: ''; flex: none; width: 24px; height: 24px; margin: -6px -4px -6px 4px; pointer-events: none;
+  background: var(--orn-b) 0 0 / 96px 24px no-repeat; image-rendering: pixelated; --fw: 24px; animation: sway4 3.2s step-end infinite;
+}
+body[data-theme] .win__bar .win__title::before {
+  content: ''; display: inline-block; vertical-align: -3px; width: 16px; height: 16px; margin-right: 6px;
+  background: var(--orn-a) 0 0 / 64px 16px no-repeat; image-rendering: pixelated; --fw: 16px; animation: sway4 2.6s step-end infinite;
+}
+body[data-theme] .wcard { position: relative; }
+body[data-theme] .wcard::before {
+  content: ''; position: absolute; right: -6px; top: -8px; width: 16px; height: 16px; pointer-events: none; z-index: 2;
+  background: var(--orn-a) 0 0 / 64px 16px no-repeat; image-rendering: pixelated; --fw: 16px; animation: sway4 3s step-end infinite;
+}
+body[data-theme] .wcard:nth-child(2n)::before { background-image: var(--orn-b); animation-delay: -1.4s; }
+@media (prefers-reduced-motion: reduce) { body[data-theme] .btn::before, body[data-theme] .btn::after, body[data-theme] .win::before, body[data-theme] .win::after, body[data-theme] .win__bar::after, body[data-theme] .win__title::before, body[data-theme] .wcard::before { animation: none; } }
+.motion-off body[data-theme] *::before, .motion-off body[data-theme] *::after { animation: none !important; }
+
+/* Version 5: readable cross-language dictionary cards. */
+.eq-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); }
+.eq-grid > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.eq-grid > div .label, .eq-grid > div .small { display: block; }
+
+.daily-calendar { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin:16px 0; text-align:center; }
+.daily-calendar > * { min-width:0; padding:8px 2px; }

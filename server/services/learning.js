@@ -115,6 +115,7 @@ function snapshotFromRow(cw, vocab) {
 }
 
 export function createLearningService({ db, clock, vocabulary, rand = Math.random }) {
+  const finalizeHooks = [];
   const now = () => clock.now().toISOString();
   const tzOf = (userId) => db.get('SELECT timezone FROM user_profiles WHERE user_id = ?', userId)?.timezone || 'UTC';
 
@@ -127,31 +128,31 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
     return db.all('SELECT * FROM session_words WHERE session_id = ? ORDER BY id', sessionId);
   }
 
-  function active(userId) {
-    const s = db.get("SELECT id FROM learning_sessions WHERE user_id = ? AND status = 'active'", userId);
+  function active(userId, lang = 'ta') {
+    const s = db.get("SELECT id FROM learning_sessions WHERE user_id = ? AND lang = ? AND status = 'active'", userId, lang);
     return s ? state(userId, s.id) : null;
   }
 
-  function start(userId) {
+  function start(userId, lang = 'ta') {
     return db.tx(() => {
-      const existing = db.get("SELECT id FROM learning_sessions WHERE user_id = ? AND status = 'active'", userId);
+      const existing = db.get("SELECT id FROM learning_sessions WHERE user_id = ? AND lang = ? AND status = 'active'", userId, lang);
       if (existing) throw conflict('You already have a lesson in progress. Resume or end it first.', { sessionId: existing.id });
       const sel = db.all(`SELECT cw.*, c.title AS collection_title FROM selections s
         JOIN collection_words cw ON cw.id = s.collection_word_id AND cw.user_id = s.user_id
-        JOIN collections c ON c.id = cw.collection_id WHERE s.user_id = ? ORDER BY s.created_at, cw.id`, userId);
+        JOIN collections c ON c.id = cw.collection_id WHERE s.user_id = ? AND cw.lang = ? ORDER BY s.created_at, cw.id`, userId, lang);
       const seen = new Set();
       const words = sel.filter((w) => (seen.has(w.word_key) ? false : (seen.add(w.word_key), true)));
       if (words.length < 1) throw bad('Select at least one word to start a lesson.');
       if (words.length > SESSION_MAX_WORDS) throw bad(`A lesson can contain at most ${SESSION_MAX_WORDS} words.`);
       const ts = now();
-      const r = db.run('INSERT INTO learning_sessions(user_id, status, word_count, started_at, last_activity_at) VALUES (?,?,?,?,?)', userId, 'active', words.length, ts, ts);
+      const r = db.run('INSERT INTO learning_sessions(user_id, lang, status, word_count, started_at, last_activity_at) VALUES (?,?,?,?,?,?)', userId, lang, 'active', words.length, ts, ts);
       const sessionId = Number(r.lastInsertRowid);
       for (const w of words) {
         const snap = snapshotFromRow(w, w.vocabulary_id ? vocabulary.get(w.vocabulary_id) : null);
         db.run('INSERT INTO session_words(session_id, word_key, collection_word_id, collection_id, collection_title, snapshot, plan) VALUES (?,?,?,?,?,?,?)',
           sessionId, w.word_key, w.id, w.collection_id, w.collection_title, j(snap), j(buildPlan(snap)));
       }
-      db.run('DELETE FROM selections WHERE user_id = ?', userId);
+      db.run('DELETE FROM selections WHERE user_id = ? AND collection_word_id IN (SELECT id FROM collection_words WHERE user_id = ? AND lang = ?)', userId, userId, lang);
       return sessionId;
     });
   }
@@ -165,7 +166,7 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
     const correct = words.reduce((a, w) => a + w.correct, 0);
     const answered = db.get('SELECT COUNT(*) AS n FROM learning_answers WHERE session_id = ?', id).n;
     return {
-      id: s.id, status: s.status, startedAt: s.started_at, completedAt: s.completed_at, wordCount: s.word_count,
+      id: s.id, lang: s.lang, status: s.status, startedAt: s.started_at, completedAt: s.completed_at, wordCount: s.word_count,
       required: s.word_count * CORRECT_PER_WORD, correct, answered, incorrect: answered - correct,
       wordsCompleted: words.filter((w) => w.completed).length, words,
     };
@@ -179,10 +180,10 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
     };
   }
 
-  function buildPool(words) {
+  function buildPool(words, lang = 'ta') {
     const pool = words.map((w) => parseJSON(w.snapshot, {}));
     const keys = new Set(pool.map((p) => p.key));
-    for (const v of vocabulary.published()) {
+    for (const v of vocabulary.published(lang)) {
       const key = `v${v.id}`;
       if (keys.has(key)) continue;
       pool.push({ key, tamil: v.tamil, english: v.english, altEnglish: v.altEnglish, partOfSpeech: v.partOfSpeech, synonyms: v.synonyms, forms: v.forms });
@@ -203,7 +204,7 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
       if (!incomplete.length) return { status: s.status, question: null };
       // mix words: avoid asking the same word twice in a row when there is a choice
       const candidates = incomplete.length > 1 ? incomplete.filter((w) => w.id !== s.last_session_word_id) : incomplete;
-      const pool = buildPool(words);
+      const pool = buildPool(words, s.lang);
       for (let attempt = 0; attempt < candidates.length + 2; attempt++) {
         const sw = weightedPick(candidates, (w) => CORRECT_PER_WORD - w.correct_count + 2, rand);
         const snap = parseJSON(sw.snapshot, {});
@@ -266,13 +267,13 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
       } else if (!correct) {
         db.run('UPDATE session_words SET incorrect_count = incorrect_count + 1 WHERE id = ?', sw.id);
       }
-      db.run(`INSERT INTO word_mastery(user_id, word_key, current_correct, total_correct, total_incorrect, updated_at) VALUES (?,?,?,?,?,?)
+      db.run(`INSERT INTO word_mastery(user_id, word_key, lang, current_correct, total_correct, total_incorrect, updated_at) VALUES (?,?,?,?,?,?,?)
         ON CONFLICT(user_id, word_key) DO UPDATE SET current_correct = excluded.current_correct, total_correct = total_correct + excluded.total_correct, total_incorrect = total_incorrect + excluded.total_incorrect, updated_at = excluded.updated_at`,
-        userId, sw.word_key, newCorrect, correct ? 1 : 0, correct ? 0 : 1, ts);
+        userId, sw.word_key, s.lang, newCorrect, correct ? 1 : 0, correct ? 0 : 1, ts);
       db.run('UPDATE learning_sessions SET current_question_id = NULL, last_activity_at = ? WHERE id = ?', ts, id);
       let rewards = null;
       const remaining = db.get('SELECT COUNT(*) AS n FROM session_words WHERE session_id = ? AND correct_count < ?', id, CORRECT_PER_WORD).n;
-      if (remaining === 0) rewards = finalize(userId, id);
+      if (remaining === 0) { rewards = finalize(userId, id); runHooks(userId, id); }
       return {
         correct, correctAnswer: q.correct_answer,
         word: { correct: newCorrect, required: CORRECT_PER_WORD, completed: newCorrect >= CORRECT_PER_WORD },
@@ -284,6 +285,7 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
   /** Complete the session and award lotuses. Runs inside the caller's transaction. */
   function finalize(userId, id) {
     const ts = now();
+    const lang = db.get('SELECT lang FROM learning_sessions WHERE id = ?', id).lang;
     const rewardDate = localDate(clock.now(), tzOf(userId));
     db.run("UPDATE learning_sessions SET status = 'completed', completed_at = ?, reward_date = ?, current_question_id = NULL WHERE id = ? AND status = 'active'", ts, rewardDate, id);
     const out = [];
@@ -291,20 +293,23 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
       const snap = parseJSON(sw.snapshot, {});
       let earned = false;
       if (sw.correct_count >= CORRECT_PER_WORD) {
-        const ins = db.run('INSERT OR IGNORE INTO lotus_rewards(user_id, word_key, reward_date, session_id, created_at) VALUES (?,?,?,?,?)', userId, sw.word_key, rewardDate, id, ts);
+        const ins = db.run('INSERT OR IGNORE INTO lotus_rewards(user_id, word_key, lang, reward_date, session_id, created_at) VALUES (?,?,?,?,?,?)', userId, sw.word_key, lang, rewardDate, id, ts);
         if (ins.changes === 1) {
           earned = true;
-          db.run(`INSERT INTO word_mastery(user_id, word_key, successful_days, last_reward_date, updated_at) VALUES (?,?,1,?,?)
+          db.run(`INSERT INTO word_mastery(user_id, word_key, lang, successful_days, last_reward_date, updated_at) VALUES (?,?,?,1,?,?)
             ON CONFLICT(user_id, word_key) DO UPDATE SET successful_days = successful_days + 1, last_reward_date = excluded.last_reward_date, updated_at = excluded.updated_at`,
-            userId, sw.word_key, rewardDate, ts);
+            userId, sw.word_key, lang, rewardDate, ts);
         }
       }
       db.run('UPDATE word_mastery SET current_correct = 0 WHERE user_id = ? AND word_key = ?', userId, sw.word_key);
       const m = db.get('SELECT * FROM word_mastery WHERE user_id = ? AND word_key = ?', userId, sw.word_key);
+      void 0;
       out.push({ wordKey: sw.word_key, tamil: snap.tamil, english: snap.english, earned, lotus: lotusStage(m?.successful_days), bloomed: earned && lotusStage(m?.successful_days) === 5 && m.successful_days === 5 });
     }
     return out;
   }
+
+  function runHooks(userId, id) { const s = db.get('SELECT lang FROM learning_sessions WHERE id = ?', id); for (const f of finalizeHooks) f(userId, s.lang); }
 
   function abandon(userId, id) {
     return db.tx(() => {
@@ -350,7 +355,7 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
     const correct = answers.filter((a) => a.is_correct).length;
     const ranked = [...words].sort((a, b) => b.accuracy - a.accuracy || a.incorrect - b.incorrect);
     return {
-      id: s.id, status: s.status, startedAt: s.started_at, completedAt: s.completed_at,
+      id: s.id, lang: s.lang, status: s.status, startedAt: s.started_at, completedAt: s.completed_at,
       totals: {
         words: words.length, questions: answers.length, correct, incorrect: answers.length - correct,
         accuracy: answers.length ? Math.round((correct / answers.length) * 100) : 0,
@@ -362,13 +367,13 @@ export function createLearningService({ db, clock, vocabulary, rand = Math.rando
     };
   }
 
-  function history(userId, limit = 20) {
+  function history(userId, limit = 20, lang = 'ta') {
     return db.all(`SELECT s.*, (SELECT COUNT(*) FROM learning_answers a WHERE a.session_id = s.id) AS answered,
       (SELECT COUNT(*) FROM learning_answers a WHERE a.session_id = s.id AND a.is_correct = 1) AS correct,
       (SELECT COUNT(*) FROM lotus_rewards r WHERE r.session_id = s.id) AS lotuses
-      FROM learning_sessions s WHERE s.user_id = ? ORDER BY s.started_at DESC LIMIT ?`, userId, Math.min(100, limit))
-      .map((s) => ({ id: s.id, status: s.status, startedAt: s.started_at, completedAt: s.completed_at, words: s.word_count, answered: s.answered, correct: s.correct, lotuses: s.lotuses }));
+      FROM learning_sessions s WHERE s.user_id = ? AND s.lang = ? ORDER BY s.started_at DESC LIMIT ?`, userId, lang, Math.min(100, limit))
+      .map((s) => ({ id: s.id, lang: s.lang, status: s.status, startedAt: s.started_at, completedAt: s.completed_at, words: s.word_count, answered: s.answered, correct: s.correct, lotuses: s.lotuses }));
   }
 
-  return { start, state, active, nextQuestion, answer, abandon, summary, history };
+  return { start, state, active, nextQuestion, answer, abandon, summary, history, onFinalize: (f) => finalizeHooks.push(f) };
 }

@@ -15,7 +15,18 @@ import { createStatsService } from './services/stats.js';
 import { createLibraryService } from './services/library.js';
 import { createProfileService } from './services/profile.js';
 import { createContentService } from './services/content.js';
+import { createDictionaryService } from './services/dictionary.js';
+import { createGrammarService } from './services/grammar.js';
+import { createNotesService } from './services/notes.js';
+import { createDailyTopicsService } from './services/dailyTopics.js';
+import { createEventBus } from './services/events.js';
+import { createDictionaryProviders } from './integrations/dictionaryProviders.js';
+import { createLookupService } from './services/lookup.js';
+import { createLearntService } from './services/learnt.js';
+import { LANGUAGES, LANG_CODES, isLang } from '../shared/indic.js';
+import { createDailyTopicAutomation } from './services/dailyTopicAutomation.js';
 
+const STREAM = Symbol('stream');
 export function createClock() {
   let offset = 0;
   return { now: () => new Date(Date.now() + offset), setOffset: (ms) => { offset = ms; }, getOffset: () => offset };
@@ -28,6 +39,7 @@ export function createApp(overrides = {}, deps = {}) {
   const clock = deps.clock || createClock();
   const mailer = createMailer(config, logger);
   const ai = deps.ai || createAI(config, deps.fetch);
+  const dailyAI=deps.dailyAI||deps.ai||createAI({ai:config.dailyTopicAi},deps.fetch);
   const youtube = deps.youtube || createYouTube(config, deps.fetch);
   const meta = createMetaService({ db });
   const vocabulary = createVocabularyService({ db, clock, meta });
@@ -35,27 +47,46 @@ export function createApp(overrides = {}, deps = {}) {
   const learning = createLearningService({ db, clock, vocabulary, rand: deps.rand });
   const stats = createStatsService({ db, clock, collections });
   const library = createLibraryService({ db, clock, meta, youtube });
-  const profile = createProfileService({ db, clock, meta, vocabulary, library, learning, stats, collections });
+  const events = createEventBus();
+  const dictionary = createDictionaryService({ db, vocabulary });
+  const grammar = createGrammarService({ db, clock, meta });
+  const notes = createNotesService({ db, clock });
+  const providers = deps.providers || createDictionaryProviders(process.env, deps.fetch);
+  const legacyDailyTopics = createDailyTopicsService({ db, clock, meta, vocabulary });
+  const dailyTopics = createDailyTopicAutomation({ db, clock, meta, vocabulary, ai:dailyAI, events, config, providers, legacy: legacyDailyTopics });
+  const profile = createProfileService({ db, clock, meta, vocabulary, library, learning, stats, collections, grammar, dailyTopics, notes });
   const auth = createAuthService({ db, clock, config, mailer });
-  const content = createContentService({ db, clock, config, meta, vocabulary, library, ai, youtube, logger });
-  const services = { auth, meta, vocabulary, collections, learning, stats, library, profile, content };
+  const content = createContentService({ db, clock, config, meta, vocabulary, library, grammar, dailyTopics, dictionary, ai, youtube, events, logger });
+  const lookup = createLookupService({ db, clock, meta, vocabulary, dictionary, ai, providers, content });
+  const learnt = createLearntService({ db, clock });
+  learning.onFinalize((userId, lang) => learnt.recompute(userId, lang)); // Learnt updates whenever a lesson completes
+  try { learnt.backfill(); } catch (e) { logger.warn('[learnt] backfill skipped:', e.message); } // evaluate historical records
+  const services = { auth, meta, vocabulary, collections, learning, stats, library, profile, content, dictionary, grammar, notes, dailyTopics, events, lookup, learnt, providers };
   const limiter = new RateLimiter();
   const router = new Router();
   const R = router;
   const id = (p) => { const n = Number(p); if (!Number.isInteger(n) || n < 1) throw bad('Invalid id'); return n; };
   const U = { auth: 'user' };
+  /** Language of a request: explicit ?lang / body.lang, else the user's active learning language. */
+  const langOf = (ctx) => {
+    const l = ctx.query.lang || ctx.body?.lang || (ctx.user ? profile.activeLang(ctx.user.id) : 'ta');
+    if (!isLang(l)) throw bad('Unknown learning language');
+    return l;
+  };
   const A = { auth: 'admin' };
 
   // ------------------------------------------------------------ public
   R.get('/api/health', () => ({ ok: true, time: clock.now().toISOString() }));
   R.get('/api/meta', () => ({
-    ...meta.publicMeta(), partsOfSpeech: PARTS_OF_SPEECH, registers: REGISTERS, storyCategories: STORY_CATEGORIES, videoCategories: VIDEO_CATEGORIES,
-    limits: { sessionMaxWords: SESSION_MAX_WORDS, correctPerWord: CORRECT_PER_WORD, collectionWordLimit: meta.getSettings().collection_word_limit },
-    features: { ai: ai.configured, youtubeDiscovery: youtube.configured, email: mailer.provider !== 'console' },
+    ...meta.publicMeta(), languages: LANG_CODES.map((c) => ({ code: c, name: LANGUAGES[c].name, native: LANGUAGES[c].native })), partsOfSpeech: PARTS_OF_SPEECH, registers: REGISTERS, storyCategories: STORY_CATEGORIES, videoCategories: VIDEO_CATEGORIES,
+    limits: { sessionMaxWords: SESSION_MAX_WORDS, correctPerWord: CORRECT_PER_WORD, collectionWordLimit: meta.getSettings().collection_word_limit, storyMinSentences: 20, dailyTopicWords: [meta.getSettings().daily_topic_words_min, meta.getSettings().daily_topic_words_max] },
+    dictionaryProviders: providers.status(),
+    features: { externalDictionary: lookup.configured(), ai: ai.configured, youtubeDiscovery: youtube.configured, email: mailer.provider !== 'console' },
   }));
   R.get('/api/public/showcase', () => ({
-    words: vocabulary.published().filter((v) => v.level === 'A1').slice(0, 6).map((v) => ({ tamil: v.tamil, transliteration: v.transliteration, english: v.english })),
-    counts: { words: vocabulary.published().length, stories: library.listStories(null).total, videos: library.listVideos(null).length },
+    words: vocabulary.published('ta').filter((v) => v.level === 'A1').slice(0, 6).map((v) => ({ tamil: v.tamil, transliteration: v.transliteration, english: v.english })),
+    perLanguage: LANG_CODES.map((c) => ({ code: c, name: LANGUAGES[c].name, native: LANGUAGES[c].native, words: vocabulary.published(c).length, sample: vocabulary.published(c).find((v) => v.conceptKey === 'water') ? { native: vocabulary.published(c).find((v) => v.conceptKey === 'water').tamil } : null })),
+    counts: { words: LANG_CODES.reduce((a, c) => a + vocabulary.published(c).length, 0), stories: library.listStories(null).total, videos: library.listVideos(null).length },
   }));
 
   // ------------------------------------------------------------ auth
@@ -83,22 +114,36 @@ export function createApp(overrides = {}, deps = {}) {
   R.get('/api/profile', (ctx) => profile.get(ctx.user.id), U);
   R.patch('/api/profile', (ctx) => profile.update(ctx.user.id, ctx.body), U);
   R.put('/api/profile/avatar', (ctx) => profile.setAvatar(ctx.user.id, ctx.body.dataUrl ?? null), U);
-  R.get('/api/home', (ctx) => profile.home(ctx.user.id), U);
+  R.put('/api/profile/language', (ctx) => profile.update(ctx.user.id, { activeLanguage: ctx.body.lang }), U);
+  R.get('/api/home', (ctx) => profile.home(ctx.user.id, langOf(ctx)), U);
 
   // ------------------------------------------------------------ vocabulary & dictionary
-  R.get('/api/vocabulary', (ctx) => vocabulary.browse(ctx.query), U);
-  R.get('/api/vocabulary/daily', (ctx) => vocabulary.daily(ctx.user.id, ctx.db.get('SELECT * FROM user_profiles WHERE user_id = ?', ctx.user.id), 12), U);
-  R.get('/api/vocabulary/lists', (ctx) => vocabulary.lists(ctx.query), U);
+  R.get('/api/vocabulary', (ctx) => vocabulary.browse({ ...ctx.query, lang: langOf(ctx) }), U);
+  R.get('/api/vocabulary/daily', (ctx) => { const l = langOf(ctx); return vocabulary.daily(ctx.user.id, profile.legacyRow(ctx.user.id, l), 12, l); }, U);
+  R.get('/api/vocabulary/lists', (ctx) => vocabulary.lists({ ...ctx.query, lang: langOf(ctx) }), U);
   R.get('/api/vocabulary/lists/:id', (ctx) => vocabulary.listDetail(id(ctx.params.id)), U);
   R.get('/api/vocabulary/:id', (ctx) => { const v = vocabulary.get(id(ctx.params.id)); if (!v) throw new HttpError(404, 'Word not found'); return v; }, U);
-  R.get('/api/dictionary/search', (ctx) => vocabulary.search(ctx.query.q, ctx.query.lang || 'auto'), U);
-  R.get('/api/dictionary/suggest', (ctx) => vocabulary.suggest(ctx.query.q, ctx.query.lang || 'auto'), U);
-  R.get('/api/dictionary/lookup', (ctx) => vocabulary.lookup(ctx.query.ta), U);
-  R.post('/api/dictionary/ai-suggest', (ctx) => content.dictionarySuggest(ctx.body.q, ctx.body.lang), { ...U, rate: { name: 'ai', limit: 20, windowMs: 60 * 60_000 } });
+  // ?dict = dictionary language (defaults to the active language); ?direction = to_en | from_en | auto
+  const dictLang = (ctx) => { const l = ctx.query.dict || ctx.body?.dict || profile.activeLang(ctx.user.id); if (!isLang(l)) throw bad('Unknown dictionary language'); return l; };
+  R.get('/api/dictionary/search', (ctx) => lookup.search(ctx.query.q, { lang: dictLang(ctx), direction: ctx.query.direction || 'auto', admin: ctx.user.role === 'admin' }), { ...U, rate: { name: 'dict', limit: 600, windowMs: 60 * 60_000 } });
+  R.get('/api/dictionary/status', async () => {
+    const health = await providers.health();
+    return { available: !!health.ok, entries: health.lexicon?.entries || {}, sources: health.lexicon?.sources || [],
+      attestedForms: health.lexicon?.attested_forms || {},
+      ai: health.llm?.available || false, model: health.llm?.model || '', message: health.error || health.llm?.reason || '',
+      translation: health.translator?.available || false };
+  }, U);
+  R.get('/api/dictionary/suggest', (ctx) => lookup.suggest(ctx.query.q, { lang: dictLang(ctx), direction: ctx.query.direction || 'auto' }), U);
+  R.get('/api/dictionary/lookup', (ctx) => lookup.lookupToken(ctx.query.ta || ctx.query.w, dictLang(ctx), { context: ctx.query.context }), U);
+  R.get('/api/dictionary/entries/:id', (ctx) => dictionary.entry(id(ctx.params.id), { admin: ctx.user.role === 'admin' }), U);
+  R.post('/api/dictionary/entries/:id/complete', (ctx) => lookup.completeEntry(id(ctx.params.id)), { ...U, rate: { name: 'complete', limit: 60, windowMs: 60 * 60_000 } });
+  R.get('/api/learnt', (ctx) => learnt.list(ctx.user.id, langOf(ctx)), U);
+  R.post('/api/dictionary/entries/:id/enrich', (ctx) => content.requestEnrichment(id(ctx.params.id), `user:${ctx.user.id}`), { ...U, rate: { name: 'enrich', limit: 10, windowMs: 60 * 60_000 } });
+  R.post('/api/dictionary/ai-suggest', (ctx) => content.dictionarySuggest(ctx.body.q, ctx.body.lang, dictLang(ctx)), { ...U, rate: { name: 'ai', limit: 20, windowMs: 60 * 60_000 } });
 
   // ------------------------------------------------------------ collections
-  R.get('/api/collections', (ctx) => collections.list(ctx.user.id, ctx.query.q), U);
-  R.post('/api/collections', (ctx) => ({ id: collections.create(ctx.user.id, ctx.body) }), U);
+  R.get('/api/collections', (ctx) => collections.list(ctx.user.id, ctx.query.q, langOf(ctx)), U);
+  R.post('/api/collections', (ctx) => ({ id: collections.create(ctx.user.id, ctx.body, langOf(ctx)) }), U);
   R.get('/api/collections/:id', (ctx) => collections.get(ctx.user.id, id(ctx.params.id), ctx.query.q), U);
   R.patch('/api/collections/:id', (ctx) => { collections.update(ctx.user.id, id(ctx.params.id), ctx.body); return { ok: true }; }, U);
   R.del('/api/collections/:id', (ctx) => { collections.remove(ctx.user.id, id(ctx.params.id)); return { ok: true }; }, U);
@@ -111,16 +156,16 @@ export function createApp(overrides = {}, deps = {}) {
   R.patch('/api/collections/:id/words/:wid', (ctx) => { collections.updateWord(ctx.user.id, id(ctx.params.id), id(ctx.params.wid), ctx.body); return { ok: true }; }, U);
   R.del('/api/collections/:id/words/:wid', (ctx) => { collections.deleteWord(ctx.user.id, id(ctx.params.id), id(ctx.params.wid)); return { ok: true }; }, U);
   R.get('/api/collections/:id/stats', (ctx) => stats.collectionStats(ctx.user.id, id(ctx.params.id)), U);
-  R.get('/api/words/search', (ctx) => collections.searchWords(ctx.user.id, String(ctx.query.q || '')), U);
+  R.get('/api/words/search', (ctx) => collections.searchWords(ctx.user.id, String(ctx.query.q || ''), langOf(ctx)), U);
 
   // ------------------------------------------------------------ selection & sessions
-  R.get('/api/selection', (ctx) => collections.getSelection(ctx.user.id), U);
-  R.post('/api/selection', (ctx) => (ctx.body.collectionId ? collections.selectCollection(ctx.user.id, id(ctx.body.collectionId)) : collections.addToSelection(ctx.user.id, ctx.body.ids)), U);
-  R.post('/api/selection/remove', (ctx) => collections.removeFromSelection(ctx.user.id, ctx.body.ids || []), U);
-  R.post('/api/selection/clear', (ctx) => collections.clearSelection(ctx.user.id), U);
-  R.get('/api/sessions', (ctx) => learning.history(ctx.user.id, Number(ctx.query.limit) || 20), U);
-  R.post('/api/sessions', (ctx) => ({ id: learning.start(ctx.user.id) }), U);
-  R.get('/api/sessions/active', (ctx) => ({ session: learning.active(ctx.user.id) }), U);
+  R.get('/api/selection', (ctx) => collections.getSelection(ctx.user.id, langOf(ctx)), U);
+  R.post('/api/selection', (ctx) => (ctx.body.collectionId ? collections.selectCollection(ctx.user.id, id(ctx.body.collectionId)) : collections.addToSelection(ctx.user.id, ctx.body.ids, langOf(ctx))), U);
+  R.post('/api/selection/remove', (ctx) => collections.removeFromSelection(ctx.user.id, ctx.body.ids || [], langOf(ctx)), U);
+  R.post('/api/selection/clear', (ctx) => collections.clearSelection(ctx.user.id, langOf(ctx)), U);
+  R.get('/api/sessions', (ctx) => learning.history(ctx.user.id, Number(ctx.query.limit) || 20, langOf(ctx)), U);
+  R.post('/api/sessions', (ctx) => ({ id: learning.start(ctx.user.id, langOf(ctx)) }), U);
+  R.get('/api/sessions/active', (ctx) => ({ session: learning.active(ctx.user.id, langOf(ctx)) }), U);
   R.get('/api/sessions/:id', (ctx) => learning.state(ctx.user.id, id(ctx.params.id)), U);
   R.get('/api/sessions/:id/question', (ctx) => learning.nextQuestion(ctx.user.id, id(ctx.params.id)), U);
   R.post('/api/sessions/:id/answer', (ctx) => learning.answer(ctx.user.id, id(ctx.params.id), ctx.body), U);
@@ -128,17 +173,41 @@ export function createApp(overrides = {}, deps = {}) {
   R.get('/api/sessions/:id/summary', (ctx) => learning.summary(ctx.user.id, id(ctx.params.id)), U);
 
   // ------------------------------------------------------------ statistics
-  R.get('/api/stats/overview', (ctx) => stats.overview(ctx.user.id), U);
-  R.get('/api/stats/collections', (ctx) => stats.globalStats(ctx.user.id), U);
+  R.get('/api/stats/overview', (ctx) => stats.overview(ctx.user.id, langOf(ctx)), U);
+  R.get('/api/stats/collections', (ctx) => stats.globalStats(ctx.user.id, langOf(ctx)), U);
 
   // ------------------------------------------------------------ reading & videos
-  R.get('/api/stories', (ctx) => library.listStories(ctx.user.id, { ...ctx.query, status: 'published' }), U);
+  R.get('/api/stories', (ctx) => library.listStories(ctx.user.id, { ...ctx.query, lang: langOf(ctx), status: 'published' }), U);
+  R.post('/api/stories/update', (ctx) => ({ items: library.refreshStories(ctx.user.id, langOf(ctx)) }), U);
   R.get('/api/stories/:id', (ctx) => library.getStory(id(ctx.params.id), ctx.user.id), U);
   R.put('/api/stories/:id/progress', (ctx) => library.saveProgress(ctx.user.id, id(ctx.params.id), ctx.body), U);
-  R.get('/api/reading/history', (ctx) => library.readingHistory(ctx.user.id), U);
-  R.get('/api/videos', (ctx) => library.listVideos(ctx.user.id, { ...ctx.query, status: 'published' }), U);
+  R.get('/api/reading/history', (ctx) => library.readingHistory(ctx.user.id, langOf(ctx)), U);
+  R.get('/api/videos', (ctx) => library.listVideos(ctx.user.id, { ...ctx.query, lang: langOf(ctx), status: 'published' }), U);
+  R.post('/api/videos/update', (ctx) => ({ items: library.refreshVideos(ctx.user.id, langOf(ctx), ctx.body?.previous) }), U);
   R.get('/api/videos/:id', (ctx) => library.getVideo(id(ctx.params.id), ctx.user.id), U);
   R.put('/api/videos/:id/state', (ctx) => library.setVideoState(ctx.user.id, id(ctx.params.id), ctx.body), U);
+
+  // ------------------------------------------------------------ grammar, notes, daily topic, live content
+  R.get('/api/grammar/categories', (ctx) => grammar.categories(langOf(ctx)), U);
+  R.get('/api/grammar', (ctx) => grammar.list(langOf(ctx), { ...ctx.query, userId: ctx.user.id }), U);
+  R.get('/api/grammar/:id', (ctx) => grammar.get(id(ctx.params.id), { userId: ctx.user.id }), U);
+  R.put('/api/grammar/:id/progress', (ctx) => grammar.setProgress(ctx.user.id, id(ctx.params.id), ctx.body), U);
+  R.get('/api/notes/month', (ctx) => notes.month(ctx.user.id, langOf(ctx), ctx.query.ym), U);
+  R.get('/api/notes/year', (ctx) => notes.year(ctx.user.id, langOf(ctx), String(ctx.query.y || '')), U);
+  R.get('/api/notes/day', (ctx) => notes.byDate(ctx.user.id, langOf(ctx), ctx.query.date), U);
+  R.get('/api/notes/search', (ctx) => notes.search(ctx.user.id, langOf(ctx), ctx.query.q), U);
+  R.get('/api/notes/recent', (ctx) => notes.recent(ctx.user.id, langOf(ctx)), U);
+  R.post('/api/notes', (ctx) => notes.create(ctx.user.id, langOf(ctx), ctx.body), U);
+  R.get('/api/notes/:id', (ctx) => notes.get(ctx.user.id, id(ctx.params.id)), U);
+  R.patch('/api/notes/:id', (ctx) => notes.update(ctx.user.id, id(ctx.params.id), ctx.body), U);
+  R.del('/api/notes/:id', (ctx) => { notes.remove(ctx.user.id, id(ctx.params.id)); return { ok: true }; }, U);
+  R.get('/api/daily-topic/today', (ctx) => { const l = langOf(ctx); const lv = ctx.query.all ? null : profile.get(ctx.user.id).languages[l].level; return dailyTopics.today(l, { level: lv }); }, U);
+  R.get('/api/daily-topic/archive', (ctx) => dailyTopics.archive(langOf(ctx), ctx.query), U);
+  R.get('/api/daily-topic/status', () => dailyTopics.status(), U);
+  R.get('/api/daily-topic/:id', (ctx) => { const t = dailyTopics.get(id(ctx.params.id), { lang: langOf(ctx) }); const lv = ctx.query.all ? null : profile.get(ctx.user.id).languages[t.lang].level; return dailyTopics.get(t.id, { level: lv, lang: langOf(ctx) }); }, U);
+  R.get('/api/content/version', (ctx) => content.version(langOf(ctx)), U);
+  R.post('/api/content/catchup', () => content.catchUp(), { ...U, rate: { name: 'catchup', limit: 30, windowMs: 60 * 60_000 } });
+  R.get('/api/events', (ctx) => { events.subscribe(ctx.req, ctx.res); return STREAM; }, U);
 
   // ------------------------------------------------------------ admin (role enforced server-side)
   R.get('/api/admin/overview', (ctx) => ({
@@ -152,26 +221,27 @@ export function createApp(overrides = {}, deps = {}) {
     automation: content.automationStatus(),
     settings: meta.getSettings(),
   }), A);
-  R.get('/api/admin/vocabulary', (ctx) => vocabulary.browse({ ...ctx.query, status: ctx.query.status || 'published', pageSize: 50 }), A);
-  R.post('/api/admin/vocabulary', (ctx) => ({ id: vocabulary.create(ctx.body, { status: ctx.body.status === 'pending' ? 'pending' : 'published', source: 'admin' }) }), A);
+  R.get('/api/admin/vocabulary', (ctx) => vocabulary.browse({ ...ctx.query, lang: langOf(ctx), status: ctx.query.status || 'published', pageSize: 50 }), A);
+  R.post('/api/admin/vocabulary', (ctx) => ({ id: vocabulary.create(ctx.body, { lang: langOf(ctx), status: ctx.body.status === 'pending' ? 'pending' : 'published', source: 'admin' }) }), A);
   R.get('/api/admin/vocabulary/:id', (ctx) => vocabulary.get(id(ctx.params.id), { any: true }), A);
   R.patch('/api/admin/vocabulary/:id', (ctx) => { vocabulary.update(id(ctx.params.id), ctx.body); return { ok: true }; }, A);
   R.post('/api/admin/vocabulary/:id/status', (ctx) => {
     const st = ctx.body.status;
     if (!['published', 'pending', 'rejected'].includes(st)) throw bad('Invalid status');
     vocabulary.setStatus(id(ctx.params.id), st, ctx.body.reviewStatus);
+    if (st === 'published') { const v = vocabulary.get(id(ctx.params.id)); if (v && dailyTopics.topUpToday(v.lang)) events.publish('content', { type: 'daily_topic', lang: v.lang }); }
     return { ok: true };
   }, A);
   R.del('/api/admin/vocabulary/:id', (ctx) => { vocabulary.remove(id(ctx.params.id)); return { ok: true }; }, A);
-  R.post('/api/admin/vocabulary/import', (ctx) => content.importVocabulary(ctx.body), { ...A, bodyLimit: 4_000_000 });
-  R.post('/api/admin/vocabulary/validate', (ctx) => { const r = vocabulary.validate(ctx.body); return { problems: r.problems, warnings: r.warnings, value: r.value }; }, A);
-  R.get('/api/admin/lists', (ctx) => ctx.db.all('SELECT l.*, (SELECT COUNT(*) FROM vocabulary_list_items i WHERE i.list_id = l.id) AS word_count FROM vocabulary_lists l ORDER BY l.created_at DESC, l.id DESC'), A);
+  R.post('/api/admin/vocabulary/import', (ctx) => content.importVocabulary({ ...ctx.body, lang: langOf(ctx) }), { ...A, bodyLimit: 4_000_000 });
+  R.post('/api/admin/vocabulary/validate', (ctx) => { const r = vocabulary.validate(ctx.body, langOf(ctx)); return { problems: r.problems, warnings: r.warnings, value: r.value }; }, A);
+  R.get('/api/admin/lists', (ctx) => ctx.db.all('SELECT l.*, (SELECT COUNT(*) FROM vocabulary_list_items i WHERE i.list_id = l.id) AS word_count FROM vocabulary_lists l WHERE l.lang = ? ORDER BY l.created_at DESC, l.id DESC', langOf(ctx)), A);
   R.get('/api/admin/lists/:id', (ctx) => vocabulary.listDetail(id(ctx.params.id), { any: true }), A);
   R.post('/api/admin/lists', (ctx) => {
     const { title, description = '', level = null, topicId = null, vocabularyIds = [], status = 'published' } = ctx.body;
     if (!String(title || '').trim()) throw bad('Title is required');
     return ctx.db.tx(() => {
-      const r = ctx.db.run('INSERT INTO vocabulary_lists(title, description, level, topic_id, status, source, created_at) VALUES (?,?,?,?,?,?,?)', String(title).trim().slice(0, 120), String(description).slice(0, 500), level || null, topicId || null, status, 'admin', clock.now().toISOString());
+      const r = ctx.db.run('INSERT INTO vocabulary_lists(lang, title, description, level, topic_id, status, source, created_at) VALUES (?,?,?,?,?,?,?,?)', langOf(ctx), String(title).trim().slice(0, 120), String(description).slice(0, 500), level || null, topicId || null, status, 'admin', clock.now().toISOString());
       const lid = Number(r.lastInsertRowid);
       vocabularyIds.forEach((v, i) => ctx.db.run('INSERT OR IGNORE INTO vocabulary_list_items(list_id, vocabulary_id, position) VALUES (?,?,?)', lid, Number(v), i));
       return { id: lid };
@@ -199,21 +269,44 @@ export function createApp(overrides = {}, deps = {}) {
   R.del('/api/admin/topics/:id', (ctx) => { meta.deleteTopic(id(ctx.params.id)); vocabulary.invalidate(); return { ok: true }; }, A);
   R.post('/api/admin/levels', (ctx) => { meta.createLevel(ctx.body); return { ok: true }; }, A);
   R.patch('/api/admin/levels/:code', (ctx) => { meta.updateLevel(ctx.params.code, ctx.body); return { ok: true }; }, A);
-  R.get('/api/admin/stories', (ctx) => library.listStories(null, { ...ctx.query, status: ctx.query.status || 'published' }), A);
+  R.get('/api/admin/stories', (ctx) => library.listStories(null, { ...ctx.query, lang: langOf(ctx), status: ctx.query.status || 'published' }), A);
   R.get('/api/admin/stories/:id', (ctx) => library.getStory(id(ctx.params.id), null, { any: true }), A);
-  R.post('/api/admin/stories', (ctx) => ({ id: library.createStory(ctx.body, { status: ctx.body.status === 'published' ? 'published' : 'pending' }) }), A);
+  R.post('/api/admin/stories', (ctx) => ({ id: library.createStory({ ...ctx.body, lang: langOf(ctx) }, { status: ctx.body.status === 'published' ? 'published' : 'pending' }) }), A);
   R.patch('/api/admin/stories/:id', (ctx) => { library.updateStory(id(ctx.params.id), ctx.body); return { ok: true }; }, A);
-  R.post('/api/admin/stories/:id/status', (ctx) => { if (!['published', 'pending', 'rejected'].includes(ctx.body.status)) throw bad('Invalid status'); library.setStoryStatus(id(ctx.params.id), ctx.body.status, ctx.body.reviewStatus); return { ok: true }; }, A);
+  R.post('/api/admin/stories/:id/status', (ctx) => {
+    if (!['published', 'pending', 'rejected'].includes(ctx.body.status)) throw bad('Invalid status');
+    if (ctx.body.status === 'published') { const st = library.getStory(id(ctx.params.id), null, { any: true }); if (st.sentenceCount < 20) throw bad(`This story has ${st.sentenceCount} sentences; published stories need at least 20.`); }
+    library.setStoryStatus(id(ctx.params.id), ctx.body.status, ctx.body.reviewStatus);
+    if (ctx.body.status === 'published') events.publish('content', { type: 'story', id: id(ctx.params.id) });
+    return { ok: true };
+  }, A);
   R.del('/api/admin/stories/:id', (ctx) => { library.deleteStory(id(ctx.params.id)); return { ok: true }; }, A);
-  R.get('/api/admin/videos', (ctx) => library.listVideos(null, { ...ctx.query, status: ctx.query.status || 'published' }), A);
+  R.get('/api/admin/videos', (ctx) => library.listVideos(null, { ...ctx.query, lang: langOf(ctx), status: ctx.query.status || 'published' }), A);
   R.get('/api/admin/videos/:id', (ctx) => library.getVideo(id(ctx.params.id), null, { any: true }), A);
-  R.post('/api/admin/videos', async (ctx) => ({ id: await library.addVideo(ctx.body, { status: ctx.body.status === 'published' ? 'published' : 'pending' }) }), A);
+  R.post('/api/admin/videos', async (ctx) => ({ id: await library.addVideo(ctx.body, { lang: langOf(ctx), status: ctx.body.status === 'published' ? 'published' : 'pending' }) }), A);
   R.patch('/api/admin/videos/:id', (ctx) => { library.updateVideo(id(ctx.params.id), ctx.body); return { ok: true }; }, A);
-  R.post('/api/admin/videos/:id/status', (ctx) => { if (!['published', 'pending', 'rejected'].includes(ctx.body.status)) throw bad('Invalid status'); library.setVideoStatus(id(ctx.params.id), ctx.body.status); return { ok: true }; }, A);
+  R.post('/api/admin/videos/:id/status', (ctx) => { if (!['published', 'pending', 'rejected'].includes(ctx.body.status)) throw bad('Invalid status'); library.setVideoStatus(id(ctx.params.id), ctx.body.status); if (ctx.body.status === 'published') events.publish('content', { type: 'video', id: id(ctx.params.id) }); return { ok: true }; }, A);
+  R.get('/api/admin/grammar', (ctx) => grammar.list(langOf(ctx), { ...ctx.query, status: ctx.query.status || 'published' }), A);
+  R.get('/api/admin/grammar/categories', (ctx) => grammar.leafCategories(langOf(ctx)), A);
+  R.get('/api/admin/grammar/:id', (ctx) => grammar.get(id(ctx.params.id), { any: true }), A);
+  R.post('/api/admin/grammar', (ctx) => ({ id: grammar.create({ ...ctx.body, lang: langOf(ctx) }, { status: ctx.body.status === 'published' ? 'published' : 'pending', source: 'admin' }) }), A);
+  R.patch('/api/admin/grammar/:id', (ctx) => { grammar.update(id(ctx.params.id), ctx.body); return { ok: true }; }, A);
+  R.post('/api/admin/grammar/:id/status', (ctx) => { if (!['published', 'pending', 'rejected'].includes(ctx.body.status)) throw bad('Invalid status'); grammar.setStatus(id(ctx.params.id), ctx.body.status, ctx.body.reviewStatus); if (ctx.body.status === 'published') events.publish('content', { type: 'grammar', id: id(ctx.params.id) }); return { ok: true }; }, A);
+  R.del('/api/admin/grammar/:id', (ctx) => { grammar.remove(id(ctx.params.id)); return { ok: true }; }, A);
+  R.get('/api/admin/daily-topics', (ctx) => dailyTopics.archive(langOf(ctx), ctx.query), A);
+  R.get('/api/admin/daily-topic-automation', () => dailyTopics.status({admin:true}), A);
+  R.post('/api/admin/daily-topic-automation/publish', (ctx) => ({published:dailyTopics.publish(id(String(ctx.body.dateId)))}), A);
+  R.get('/api/admin/daily-topic-automation/:id', (ctx) => dailyTopics.inspect(id(ctx.params.id)), A);
+  R.put('/api/admin/daily-topic-automation/:id/entries', (ctx) => dailyTopics.reviewSet(id(ctx.params.id),langOf(ctx),ctx.body.entries,ctx.user.id), A);
+  R.post('/api/admin/daily-topic-automation/override', (ctx) => ({ id: dailyTopics.override(ctx.body) }), A);
+  R.post('/api/admin/daily-topic-automation/run', () => dailyTopics.tick(), A);
+  R.post('/api/admin/daily-topic-automation/retry', (ctx) => { dailyTopics.retry(Number(ctx.body.dateId),ctx.body.lang); return {ok:true}; }, A);
+  R.post('/api/admin/daily-topics', (ctx) => { const tid = dailyTopics.adminSet(langOf(ctx), ctx.body); events.publish('content', { type: 'daily_topic', id: tid }); return { id: tid }; }, A);
+  R.post('/api/admin/dictionary/:id/review', (ctx) => dictionary.reviewEnrichment(id(ctx.params.id), !!ctx.body.approve), A);
   R.del('/api/admin/videos/:id', (ctx) => { library.deleteVideo(id(ctx.params.id)); return { ok: true }; }, A);
-  R.get('/api/admin/review', () => content.reviewQueue(), A);
-  R.get('/api/admin/jobs', (ctx) => ({ jobs: content.listJobs({ status: ctx.query.status }), automation: content.automationStatus() }), A);
-  R.post('/api/admin/jobs', (ctx) => content.trigger(ctx.body.type, ctx.body.payload || {}, `admin:${ctx.user.email}`), { ...A, rate: { name: 'jobs', limit: 30, windowMs: 60 * 60_000 } });
+  R.get('/api/admin/review', (ctx) => content.reviewQueue(ctx.query.lang && isLang(ctx.query.lang) ? ctx.query.lang : undefined), A);
+  R.get('/api/admin/jobs', (ctx) => ({ jobs: content.listJobs({ status: ctx.query.status, lang: ctx.query.lang }), automation: content.automationStatus() }), A);
+  R.post('/api/admin/jobs', (ctx) => content.trigger(ctx.body.type, ctx.body.payload || {}, `admin:${ctx.user.email}`, langOf(ctx)), { ...A, rate: { name: 'jobs', limit: 60, windowMs: 60 * 60_000 } });
   R.post('/api/admin/jobs/run-scheduler', () => content.tick({ force: true }), A);
   R.post('/api/admin/jobs/:id/retry', (ctx) => content.retry(id(ctx.params.id)), A);
   R.get('/api/admin/settings', () => meta.getSettings(), A);
@@ -272,6 +365,7 @@ export function createApp(overrides = {}, deps = {}) {
       const outCookies = [];
       const ctx = { req, res, params, query: Object.fromEntries(url.searchParams), body, user, token, db, setCookie: (c) => outCookies.push(c) };
       const data = await route.handler(ctx);
+      if (data === STREAM) return; // server-sent events keep the connection open
       if (outCookies.length) res.setHeader('Set-Cookie', outCookies);
       sendJSON(res, 200, data ?? { ok: true });
     } catch (e) {
@@ -284,16 +378,30 @@ export function createApp(overrides = {}, deps = {}) {
 
   const server = http.createServer((req, res) => { handle(req, res).catch((e) => { logger.error(e); try { sendJSON(res, 500, { error: 'Server error' }); } catch { /* ignore */ } }); });
   let timer = null;
+  let topicTimer = null;
+  let startupTimer = null;
   function startScheduler() {
+    if(topicTimer)return;
+    // Server-owned scan: startup, within a minute of local midnight, and after wake.
+    const topics = () => {
+      if(!config.dailyTopicEnabled)return;
+      void dailyTopics.tick().then(r=>{if(r.plannerError)logger.warn('[daily-topic planner]',r.plannerError);}).catch(e=>logger.warn('[daily-topic]',e.message));
+    };
+    topics();
+    topicTimer = setInterval(topics, Math.max(10,config.dailyTopicScanMs)); topicTimer.unref();
     if (!config.automationEnabled) return;
     const run = () => content.tick().catch((e) => logger.warn('[scheduler]', e.message));
-    setTimeout(run, 5000).unref();
+    startupTimer=setTimeout(run, 5000);startupTimer.unref();
     timer = setInterval(run, config.automationIntervalMinutes * 60_000);
     timer.unref();
   }
-  function close() {
+  async function close() {
     if (timer) clearInterval(timer);
-    return new Promise((resolve) => server.close(() => { db.close(); resolve(); }));
+    if (topicTimer) clearInterval(topicTimer);
+    if(startupTimer)clearTimeout(startupTimer);
+    await dailyTopics.drain();
+    events.closeAll();
+    return new Promise((resolve) => { server.close(() => { db.close(); resolve(); }); server.closeAllConnections?.(); });
   }
   return { config, db, clock, services, server, mailer, startScheduler, close };
 }

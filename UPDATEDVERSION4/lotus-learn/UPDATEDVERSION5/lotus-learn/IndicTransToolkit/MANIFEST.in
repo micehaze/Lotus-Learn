@@ -1,1 +1,0 @@
-recursive-include IndicTransToolkit *.pyx *.c *.so

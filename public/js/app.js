@@ -1,4 +1,4 @@
-import { h, raw, api, state, applyPrefs, setNavigator, loadingView, errorsBox, win, toast, esc } from './core.js';
+import { h, raw, api, state, applyPrefs, setNavigator, loadingView, errorsBox, win, toast, esc, langName } from './core.js';
 import { setScene } from './scene.js';
 import * as pub from './pages/public.js';
 import * as home from './pages/home.js';
@@ -8,6 +8,9 @@ import * as learn from './pages/learn.js';
 import * as lib from './pages/library.js';
 import * as acct from './pages/account.js';
 import * as admin from './pages/admin.js';
+import * as topic from './pages/dailytopic.js';
+import * as grammar from './pages/grammar.js';
+import * as notes from './pages/notes.js';
 
 // [pattern, page, access] access: 'public' | 'guest' (signed-out only) | 'user' | 'admin'
 const ROUTES = [
@@ -24,6 +27,13 @@ const ROUTES = [
   ['/vocabulary/lists/:id', vocab.listDetail, 'user'],
   ['/vocabulary/word/:id', vocab.wordDetail, 'user'],
   ['/dictionary', vocab.dictionary, 'user'],
+  ['/dictionary/entry/:id', vocab.wordDetail, 'user'],
+  ['/daily-topic', topic.today, 'user'],
+  ['/daily-topic/archive', topic.archive, 'user'],
+  ['/daily-topic/:id', topic.detail, 'user'],
+  ['/grammar', grammar.index, 'user'],
+  ['/grammar/:id', grammar.lesson, 'user'],
+  ['/notes', notes.page, 'user'],
   ['/collections', cols.index, 'user'],
   ['/collections/new', cols.create, 'user'],
   ['/collections/:id', cols.detail, 'user'],
@@ -47,9 +57,10 @@ const ROUTES = [
 });
 
 const NAV = [
-  ['/home', 'Home'], ['/vocabulary', 'Vocabulary'], ['/videos', 'Videos'], ['/reading', 'Reading'], ['/dictionary', 'Dictionary'],
-  ['/collections', 'Collections'], ['/statistics', 'Statistics'], ['/profile', 'Profile'],
+  ['/home', 'Home'], ['/vocabulary', 'Vocabulary'], ['/dictionary', 'Dictionary'], ['/daily-topic', 'Daily Topic'], ['/grammar', 'Grammar'],
+  ['/reading', 'Reading'], ['/videos', 'Videos'], ['/collections', 'Collections'], ['/notes', 'Learning Notes'], ['/statistics', 'Statistics'], ['/profile', 'Profile'],
 ];
+const LANGS = [['ta', 'தமிழ்', 'Tamil'], ['ml', 'മലയാളം', 'Malayalam'], ['kn', 'ಕನ್ನಡ', 'Kannada'], ['te', 'తెలుగు', 'Telugu']];
 
 function shell() {
   const signedIn = !!state.user;
@@ -58,7 +69,8 @@ function shell() {
   return h`
   <header class="topbar">
     <a class="logo" href="${signedIn ? '/home' : '/'}" aria-label="Lotus Learn home"><span class="logo__word">Lotus Learn</span><span class="logo__ta" lang="ta">தமிழ்</span></a>
-    ${signedIn ? h`<form class="topbar__search" role="search" data-quicksearch><label class="visually-hidden" for="qs">Search the dictionary</label><input id="qs" type="search" name="q" placeholder="Search in English, Hindi, Malayalam or Tamil" autocomplete="off"><button class="btn btn--cyan btn--small" type="submit">Search</button></form>` : ''}
+    ${signedIn ? h`<div class="lang-switch" role="group" aria-label="Learning language">${LANGS.map(([c, n, en]) => h`<button type="button" data-lang="${c}" aria-pressed="${c === state.lang ? 'true' : 'false'}" title="Learn ${en}" lang="${c}">${n}</button>`)}</div>
+      <form class="topbar__search" role="search" data-quicksearch><label class="visually-hidden" for="qs">Search the ${langName()} dictionary</label><input id="qs" type="search" name="q" placeholder="Search ${langName()} or English" autocomplete="off"><button class="btn btn--cyan btn--small" type="submit">Search</button></form>` : ''}
     <div class="topbar__user">
       ${signedIn ? h`<button class="btn btn--ghost btn--small menu-btn" type="button" data-menu aria-expanded="false" aria-controls="nav">Menu</button>
         <a href="/profile" class="avatar" style="${p?.avatar ? raw(`background-image:url('${esc(p.avatar)}')`) : ''}" aria-label="Your profile">${p?.avatar ? '' : initial}</a>
@@ -69,7 +81,7 @@ function shell() {
   </header>
   ${signedIn ? h`<nav class="navbar" id="nav" aria-label="Main">${NAV.map(([href, label]) => h`<a href="${href}" data-nav="${href}">${label}</a>`)}${state.user.role === 'admin' ? h`<a href="/admin" data-nav="/admin">Admin</a>` : ''}<a href="/settings" data-nav="/settings">Settings</a></nav>` : ''}
   <main id="main" tabindex="-1"></main>
-  <footer class="footer">Lotus Learn · original pixel art · Tamil learning for every level</footer>`;
+  <footer class="footer">Lotus Learn · original pixel art · Tamil · Malayalam · Kannada · Telugu</footer>`;
 }
 
 function renderShell() {
@@ -82,8 +94,9 @@ function renderShell() {
   app.querySelector('[data-quicksearch]')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const q = new FormData(e.target).get('q');
-    navigate(`/dictionary?q=${encodeURIComponent(q)}`);
+    navigate(`/dictionary?q=${encodeURIComponent(q)}&direction=auto`);
   });
+  app.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => switchLanguage(b.dataset.lang)));
   const menu = app.querySelector('[data-menu]');
   menu?.addEventListener('click', () => { const n = app.querySelector('.navbar'); n.classList.toggle('open'); menu.setAttribute('aria-expanded', n.classList.contains('open')); });
 }
@@ -95,7 +108,7 @@ export async function navigate(path, { replace = false } = {}) {
 }
 setNavigator(navigate);
 
-async function render() {
+async function render({ keepScroll = false } = {}) {
   const seq = ++renderSeq;
   const url = new URL(location.href);
   const path = url.pathname;
@@ -114,6 +127,7 @@ async function render() {
   try {
     const view = await match.page({ params, query: Object.fromEntries(url.searchParams), navigate, refreshShell: renderShell });
     if (seq !== renderSeq || !view) return;
+    if (keepScroll) view.keepScroll = true;
     mountView(view);
   } catch (e) {
     if (seq !== renderSeq) return;
@@ -126,7 +140,7 @@ function mountView(view) {
   const main = document.getElementById('main');
   document.title = `${view.title} · Lotus Learn`;
   main.innerHTML = String(view.html);
-  setScene(view.scene || 'lagoon');
+  setScene(view.scene || 'lagoon', location.pathname.split('/')[1] || 'home');
   view.mount?.(main);
   if (!view.keepScroll) scrollTo(0, 0);
   main.focus({ preventScroll: true });
@@ -143,10 +157,44 @@ document.addEventListener('click', (e) => {
 addEventListener('popstate', render);
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => { applyPrefs(); render(); });
 
+/** Switch the active learning language: theme, scenes, content and progress all follow. */
+export async function switchLanguage(lang) {
+  if (lang === state.lang) return;
+  try {
+    state.profile = await api('/profile/language', { method: 'PUT', body: { lang } });
+    applyPrefs(); renderShell(); connectLive();
+    toast(`Now learning ${langName(lang)}. Your other languages are saved exactly as they were.`);
+    const path = location.pathname;
+    const keepPath = /^\/(home|vocabulary|dictionary$|daily-topic$|daily-topic\/archive|grammar$|reading$|videos$|collections$|notes|statistics$|profile|settings|study|admin)/.test(path);
+    navigate(keepPath || /^\/daily-topic\/\d+$/.test(path) ? path : '/home', { replace: true });
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+// ------------------------------------------------------------------ live content updates
+let source = null; let versionTimer = null; let lastVersion = '';
+const LIVE_PAGES = /^\/(home|daily-topic|grammar|reading|videos|vocabulary)/;
+function onNewContent(data) {
+  if (data.lang && data.lang !== state.lang) return;
+  if (LIVE_PAGES.test(location.pathname) && !document.querySelector('.modal-back, textarea:focus, input:focus')) { render({ keepScroll: true }); toast('New content was added and is now shown.'); }
+  else toast(`New ${langName()} content is available.`);
+}
+export function connectLive() {
+  source?.close(); clearInterval(versionTimer);
+  if (!state.user) return;
+  if ('EventSource' in window) {
+    source = new EventSource('/api/events');
+    source.addEventListener('content', (e) => { try { onNewContent(JSON.parse(e.data)); } catch { /* ignore */ } });
+  }
+  // fallback poll (also covers proxies that drop event streams)
+  const poll = async () => { try { const v = JSON.stringify(await api(`/content/version?lang=${state.lang}`)); if (lastVersion && v !== lastVersion) onNewContent({ lang: state.lang }); lastVersion = v; } catch { /* offline */ } };
+  lastVersion = ''; poll(); versionTimer = setInterval(poll, 60_000);
+}
+
 export async function refreshMe() {
   const me = await api('/auth/me');
   state.user = me.user; state.profile = me.profile || null;
   applyPrefs();
+  connectLive();
 }
 
 (async function boot() {
@@ -160,5 +208,9 @@ export async function refreshMe() {
   applyPrefs();
   renderShell();
   render();
+  if (state.user) {
+    connectLive();
+    api('/content/catchup', { method: 'POST' }).catch(() => {}); // safe, throttled check for missed daily updates
+  }
 })();
 export { renderShell, toast };
