@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HttpError } from './util.js';
 
+// decodeURIComponent throws on malformed input such as "100%" or "%E0"; return null instead.
+export function safeDecode(value) {
+  try { return decodeURIComponent(value); } catch { return null; }
+}
+
 export class Router {
   constructor() { this.routes = []; }
   on(method, pattern, handler, opts = {}) {
@@ -21,7 +26,11 @@ export class Router {
       if (!m) continue;
       if (r.method !== method) { wrongMethod = true; continue; }
       const params = {};
-      r.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]); });
+      for (let i = 0; i < r.keys.length; i++) {
+        const v = safeDecode(m[i + 1]);
+        if (v === null) throw new HttpError(400, 'Malformed URL');
+        params[r.keys[i]] = v;
+      }
       return { route: r, params };
     }
     return wrongMethod ? { methodNotAllowed: true } : null;
@@ -33,7 +42,10 @@ export function parseCookies(header = '') {
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
     if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    // Cookies on localhost are shared with every other local app, so one badly
+    // encoded cookie from elsewhere must not break requests here: skip it.
+    const value = safeDecode(part.slice(i + 1).trim());
+    if (value !== null) out[part.slice(0, i).trim()] = value;
   }
   return out;
 }
@@ -83,7 +95,8 @@ export function serveStatic(req, res, roots, pathname) {
   // roots: [{ prefix: '/', dir }, { prefix: '/shared/', dir }]
   for (const { prefix, dir } of roots) {
     if (!pathname.startsWith(prefix)) continue;
-    const rel = decodeURIComponent(pathname.slice(prefix.length));
+    const rel = safeDecode(pathname.slice(prefix.length));
+    if (rel === null) continue;
     const full = path.resolve(dir, `.${path.sep}${rel}`);
     if (!full.startsWith(path.resolve(dir) + path.sep)) continue; // traversal guard
     let st;

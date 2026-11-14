@@ -31,7 +31,7 @@ class Ollama:
         if not self.model:
             return {"available": False, "reason": "No local model selected (OLLAMA_MODEL)", "url": self.url}
         try:
-            tags = self._req("/api/tags", timeout=3)
+            tags = self._req("/api/tags", timeout=1.5)  # health checks must stay fast when Ollama is not running
         except LLMUnavailable as e:
             return {"available": False, "reason": str(e), "url": self.url, "model": self.model}
         names = [m.get("name") for m in tags.get("models", [])]
