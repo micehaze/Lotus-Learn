@@ -112,7 +112,7 @@ export function createVocabularyService({ db, clock, meta }) {
   /** Published entries of one language, with precomputed search keys. */
   function published(lang = 'ta', includeImports = false) {
     const key = includeImports ? lang + ':dictionary' : lang;
-    const eligible = includeImports ? "(v.status = 'published' OR (v.status = 'pending' AND v.origin IN ('wiktionary','olam','alar','datuk','indic-glossaries','indictrans2','local-llm','local','daily-topic-ai')))" : "v.status = 'published'";
+    const eligible = includeImports ? "(v.status = 'published' OR (v.status = 'pending' AND v.origin IN ('wiktionary','olam','alar','datuk','indic-glossaries','indictrans2','local-llm','local','daily-topic-ai','daily-topic-dictionary')))" : "v.status = 'published'";
     if (!caches.has(key)) {
       const rows = db.all(`${VOCAB_SELECT} WHERE ${eligible} AND v.lang = ? ORDER BY v.id`, lang).map(rowToVocab);
       const senses = db.all(`SELECT s.vocabulary_id, s.gloss FROM word_senses s JOIN vocabulary v ON v.id = s.vocabulary_id WHERE v.lang = ? AND ${eligible}`, lang);

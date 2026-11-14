@@ -1,5 +1,6 @@
 // Core client utilities: escaping templates, API, state, router helpers, UI primitives.
-import { transliterateAny as transliterate, LANGUAGES } from '/shared/indic.js';
+import { transliterateAny as scholarly, LANGUAGES } from '/shared/indic.js';
+import { phonetic as transliterate } from '/shared/phonetic.js';
 
 export class Raw { constructor(s) { this.s = s; } toString() { return this.s; } }
 export const raw = (s) => new Raw(String(s ?? ''));
@@ -103,7 +104,7 @@ export function toast(msg, kind = 'ok') {
   const t = document.createElement('div');
   t.className = `toast toast--${kind}`; t.textContent = msg;
   toastBox.append(t);
-  setTimeout(() => t.remove(), kind === 'bad' ? 7000 : 3800);
+  setTimeout(() => t.remove(), kind === 'info' ? 12000 : kind === 'bad' ? 7000 : 3800);
 }
 
 /** Opens a retro-window modal. Returns { el, close }. `onMount(el, close)` binds events. */
@@ -178,4 +179,6 @@ export async function saveToCollection({ vocabularyIds, word, title = 'Save to c
 
 export function debounce(fn, ms = 250) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 export function formData(form) { return Object.fromEntries(new FormData(form)); }
-export { transliterate };
+// `transliterate` gives the easy, diacritic-free spelling learners can read aloud (ente peru, vanakkam);
+// `scholarly` keeps the ISO 15919 form (eṉṟe pēr) for places that need it.
+export { transliterate, scholarly };

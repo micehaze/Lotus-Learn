@@ -25,7 +25,8 @@ function run(name, cmd, args, cwd) {
 }
 process.on('SIGINT', () => shutdown());
 process.on('SIGTERM', () => shutdown());
-if (process.env.OLLAMA_MODEL || !/^(0|false|off)$/i.test(process.env.DAILY_TOPIC_ENABLED || 'true')) {
+// Ollama is optional: start it only when a model is configured in .env.
+if (process.env.OLLAMA_MODEL || process.env.DAILY_TOPIC_MODEL) {
   const ollamaUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
   try { await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(1500) }); }
   catch {

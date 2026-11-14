@@ -135,7 +135,8 @@ test('restart after two missing days catches up in order; published history rema
   await s.close();s=await setup({file,instant:'2026-03-10T18:00:00Z',ai:{configured:false}});
   assert.equal(s.daily.get(first.id).words.length,30);
   const r=await s.daily.tick();assert.ok(r.failed>0);assert.equal(s.daily.today('ta').date,'2026-03-10');
-  assert.ok(s.daily.status({admin:true}).jobs.some(j=>j.error_summary?.includes('Ollama')));
+  // Without Ollama the job runs in offline mode; with no dictionary to search it explains what is missing.
+  assert.ok(s.daily.status({admin:true}).jobs.some(j=>j.error_summary?.includes('Offline mode')&&j.error_summary.includes('offline dictionary')));
   assert.ok(fs.readdirSync(path.join(dir,'backups')).length>0);
  }finally{await s.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
@@ -294,4 +295,42 @@ test('pinned timezone survives DST, host configuration changes and midnight',asy
   s.clock.set('2026-11-01T06:30:00Z');assert.equal(s.daily.dateOf(),'2026-11-01');
   assert.equal(s.db.get("SELECT value FROM daily_curriculum_state WHERE key='timezone'").value,'Asia/Bangkok');
  }finally{await s.close();}
+});
+
+test('without Ollama, lists are built from the library and offline dictionary, reviewed by source evidence, and published',async()=>{
+ const glossIndex=new Map();
+ const nativeFor=(lang,gloss)=>{if(!glossIndex.has(gloss))glossIndex.set(gloss,glossIndex.size+1);const [root,letter]=roots[lang];return root+letter.repeat(glossIndex.get(gloss));};
+ const dictionary={
+  async health(){return {ok:true};},
+  async lookupEnglish(gloss,lang){return {candidates:[
+    {native:nativeFor(lang,gloss),english:gloss,basis:'Wiktionary translation table',score:80,pos:'noun'},
+    {native:nativeFor(lang,gloss+'?'),english:'something unrelated',basis:'Wiktionary translation table',score:90,pos:'noun'}]};},
+ };
+ const s=await setup({ai:{configured:false,provider:'none'},dictionary});
+ try{
+  const r=await s.daily.tick({maxJobs:4});
+  assert.equal(r.failed,0,JSON.stringify(s.daily.status({admin:true}).jobs.map(j=>j.error_summary)));
+  const day=s.db.get("SELECT * FROM daily_topic_dates WHERE status='published' ORDER BY topic_date LIMIT 1");
+  assert.ok(day,'a date is published without any model');
+  for(const lang of LANG_CODES){
+   const set=s.db.get('SELECT * FROM daily_topic_language_sets WHERE date_id=? AND language_code=?',day.id,lang);
+   const entries=s.db.all('SELECT payload FROM daily_study_entries WHERE language_set_id=?',set.id).map(x=>JSON.parse(x.payload));
+   assert.ok(entries.length>=10,`${lang} has ${entries.length} entries`);
+   assert.ok(entries.every(e=>e.provenance.review.ok===true&&e.provenance.review.method==='source-evidence'));
+   // the unrelated higher-scored sense is never chosen: the gloss must match the dictionary meaning
+   assert.ok(entries.every(e=>e.source!=='offline-dictionary'||e.provenance.dictionaryEvidence[0].meanings[0]===e.english));
+  }
+  assert.ok(s.db.get("SELECT COUNT(*) n FROM vocabulary WHERE origin='daily-topic-dictionary'").n>0);
+  assert.equal(s.db.get("SELECT COUNT(*) n FROM vocabulary WHERE origin='daily-topic-ai'").n,0);
+ }finally{await s.close();}
+});
+
+test('offline validation: 10+ sourced entries, no phrase requirement, common words may recur',()=>{
+ const list=entries('ta',12).map((e,i)=>({...e,construction:'word',native:roots.ta[0]+roots.ta[1].repeat(i+1),lemma:roots.ta[0]+roots.ta[1].repeat(i+1)}));
+ assert.equal(validateDailyEntries(list,'ta').ok,false);
+ assert.equal(validateDailyEntries(list,'ta',new Set(),{offline:true}).ok,true);
+ assert.equal(validateDailyEntries(list.slice(0,9),'ta',new Set(),{offline:true}).ok,false);
+ const history=new Set(list.slice(0,5).map(e=>lexicalIdentity(e.native)));
+ assert.equal(validateDailyEntries(list,'ta',history,{offline:true}).ok,true);
+ assert.equal(validateDailyEntries(list,'ta',history).ok,false);
 });

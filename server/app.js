@@ -56,7 +56,7 @@ export function createApp(overrides = {}, deps = {}) {
   const dailyTopics = createDailyTopicAutomation({ db, clock, meta, vocabulary, ai:dailyAI, events, config, providers, legacy: legacyDailyTopics });
   const profile = createProfileService({ db, clock, meta, vocabulary, library, learning, stats, collections, grammar, dailyTopics, notes });
   const auth = createAuthService({ db, clock, config, mailer });
-  const content = createContentService({ db, clock, config, meta, vocabulary, library, grammar, dailyTopics, dictionary, ai, youtube, events, logger });
+  const content = createContentService({ db, clock, config, meta, vocabulary, library, grammar, dailyTopics, dictionary, ai, youtube, events, providers, logger });
   const lookup = createLookupService({ db, clock, meta, vocabulary, dictionary, ai, providers, content });
   const learnt = createLearntService({ db, clock });
   learning.onFinalize((userId, lang) => learnt.recompute(userId, lang)); // Learnt updates whenever a lesson completes
@@ -138,7 +138,8 @@ export function createApp(overrides = {}, deps = {}) {
   R.get('/api/dictionary/entries/:id', (ctx) => dictionary.entry(id(ctx.params.id), { admin: ctx.user.role === 'admin' }), U);
   R.post('/api/dictionary/entries/:id/complete', (ctx) => lookup.completeEntry(id(ctx.params.id)), { ...U, rate: { name: 'complete', limit: 60, windowMs: 60 * 60_000 } });
   R.get('/api/learnt', (ctx) => learnt.list(ctx.user.id, langOf(ctx)), U);
-  R.post('/api/dictionary/entries/:id/enrich', (ctx) => content.requestEnrichment(id(ctx.params.id), `user:${ctx.user.id}`), { ...U, rate: { name: 'enrich', limit: 10, windowMs: 60 * 60_000 } });
+  // Without a local model, "enrich" uses the offline sources (lexicon, Wikipedia usage, other-language equivalents).
+  R.post('/api/dictionary/entries/:id/enrich', (ctx) => (ai.configured ? content.requestEnrichment(id(ctx.params.id), `user:${ctx.user.id}`) : lookup.completeEntry(id(ctx.params.id))), { ...U, rate: { name: 'enrich', limit: 10, windowMs: 60 * 60_000 } });
   R.post('/api/dictionary/ai-suggest', (ctx) => content.dictionarySuggest(ctx.body.q, ctx.body.lang, dictLang(ctx)), { ...U, rate: { name: 'ai', limit: 20, windowMs: 60 * 60_000 } });
 
   // ------------------------------------------------------------ collections

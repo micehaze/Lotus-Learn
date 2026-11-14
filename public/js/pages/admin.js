@@ -26,7 +26,7 @@ async function overview() {
     html: h`<div class="statgrid"><div class="stat"><b>${c.users}</b><span>accounts</span></div><div class="stat"><b>${c.sessions}</b><span>lessons started</span></div><div class="stat"><b>${(c.vocabulary.pending || 0) + (c.stories.pending || 0) + (c.videos.pending || 0)}</b><span>items awaiting review</span></div></div>
     <dl class="kv" style="margin-top:14px"><dt>Vocabulary</dt><dd>${cnt(c.vocabulary)}</dd><dt>Stories</dt><dd>${cnt(c.stories)}</dd><dt>Videos</dt><dd>${cnt(c.videos)}</dd></dl>
     <h3 style="margin-top:16px">Automation</h3>
-    <dl class="kv"><dt>Scheduler</dt><dd>${a.enabled ? 'enabled' : 'disabled'}</dd><dt>AI provider</dt><dd>${a.ai.configured ? `${a.ai.provider} (${a.ai.model})` : h`<span class="status-failed">not configured</span> — install Ollama and set OLLAMA_MODEL (free, runs locally)`}</dd>
+    <dl class="kv"><dt>Scheduler</dt><dd>${a.enabled ? 'enabled' : 'disabled'}</dd><dt>AI provider</dt><dd>${a.ai.configured ? `${a.ai.provider} (${a.ai.model})` : h`not used — every feature works offline (word library, offline dictionary, practice stories, editor-written lessons). Optional: install Ollama and set OLLAMA_MODEL to also generate stories, grammar and richer word lists.`}</dd>
       <dt>YouTube discovery</dt><dd>${a.youtube.configured ? 'configured' : h`<span class="status-failed">not configured</span> — set YOUTUBE_API_KEY`}</dd><dt>Today (${a.today})</dt><dd>${a.plannedJobs.length ? a.plannedJobs.map((p) => h`${p.type}: ${p.status}<br>`) : h`no jobs planned<br>`}${a.skipped.map((s) => h`<span class="small muted">${s.type} skipped: ${s.reason}</span><br>`)}</dd></dl>
     <div class="btn-row" style="margin-top:12px"><a class="btn" href="/admin/review">Open review queue</a><a class="btn btn--cyan" href="/admin/jobs">Automation</a></div>`,
   };
@@ -81,7 +81,7 @@ function vocabForm(v = {}) {
     <label class="field"><span>Example sentences — one per line: Tamil with [[target]] | English | form</span><textarea class="ta-input" name="examples">${pairsToText(v.examples)}</textarea></label>
     <label class="field"><span>Verb forms (JSON, verbs only)</span><input name="forms" value="${JSON.stringify(v.forms || {})}"></label>
     <div data-ai-out></div><div data-err></div>
-    <div class="btn-row">${state.meta.features.ai ? h`<button class="btn btn--ghost" type="button" data-assist>AI: suggest translations & examples</button>` : ''}<button class="btn" type="submit">${v.id ? 'Save changes' : 'Create word'}</button></div></form>`;
+    <div class="btn-row"><button class="btn btn--ghost" type="button" data-assist>${state.meta.features.ai ? 'AI: suggest translations & examples' : 'Fill from offline dictionary'}</button><button class="btn" type="submit">${v.id ? 'Save changes' : 'Create word'}</button></div></form>`;
 }
 function readVocabForm(f) {
   const d = Object.fromEntries(new FormData(f));
@@ -92,14 +92,14 @@ function bindVocabForm(el, onSave) {
   const f = el.querySelector('[data-vf]');
   f.addEventListener('submit', async (e) => { e.preventDefault(); try { await onSave(readVocabForm(f)); } catch (x) { el.querySelector('[data-err]').innerHTML = String(errorsBox(x)); } });
   el.querySelector('[data-assist]')?.addEventListener('click', async (e) => {
-    const out = el.querySelector('[data-ai-out]'); e.target.disabled = true; out.textContent = 'Asking AI…';
+    const out = el.querySelector('[data-ai-out]'); e.target.disabled = true; out.textContent = state.meta.features.ai ? 'Asking AI…' : 'Looking up…';
     try {
       const r = await api('/admin/ai/translate', { method: 'POST', body: { tamil: f.tamil.value, english: f.english.value } });
       const s = r.suggestion;
       for (const k of ['english', 'hindi', 'malayalam', 'pronunciation']) if (s[k] && !f[k].value) f[k].value = s[k];
       if (s.collocations?.length && !f.collocations.value) f.collocations.value = pairsToText(s.collocations);
       if (s.examples?.length && !f.examples.value) f.examples.value = pairsToText(s.examples);
-      out.innerHTML = String(h`<div class="notice">AI suggestions filled empty fields only. They are unverified — check every line before saving.</div>`);
+      out.innerHTML = String(h`<div class="notice">${r.provider === 'offline-dictionary' ? 'Filled empty fields from the offline dictionary and the pronunciation spelling. Check them before saving.' : 'AI suggestions filled empty fields only. They are unverified — check every line before saving.'}</div>`);
     } catch (x) { out.innerHTML = String(errorsBox(x)); }
     e.target.disabled = false;
   });
@@ -231,7 +231,7 @@ async function stories({ query }) {
   const r = await api(`/admin/stories${qs({ status: st })}`);
   const editing = query.edit ? await api(`/admin/stories/${query.edit}`) : null;
   return {
-    html: h`<div class="btn-row" style="margin-bottom:10px"><button class="btn btn--bloom" data-new>Add story</button>${state.meta.features.ai ? h`<button class="btn btn--cyan" data-gen>Generate a story with AI</button>` : ''}
+    html: h`<div class="btn-row" style="margin-bottom:10px"><button class="btn btn--bloom" data-new>Add story</button><button class="btn btn--cyan" data-gen>${state.meta.features.ai ? 'Generate a story with AI' : 'Add a batch of practice stories'}</button>
       ${['published', 'pending', 'rejected'].map((s) => h`<a class="btn btn--small ${s === st ? '' : 'btn--ghost'}" href="/admin/stories?status=${s}">${s}</a>`)}</div>
     <div class="table-wrap"><table class="tbl"><tr><th>Title</th><th>Level</th><th>Source</th><th>Status</th><th></th></tr>${r.items.map((s) => h`<tr><td><span class="ta" lang="ta">${s.title}</span><br><span class="small">${s.titleEn}</span></td><td>${s.level}</td><td class="small">${s.sourceType}</td><td>${status(s.status)}</td><td><div class="btn-row"><button class="btn btn--small btn--ghost" data-edit="${s.id}">Edit</button>${s.status !== 'published' ? h`<button class="btn btn--small btn--green" data-st="${s.id}:published">Publish</button>` : h`<button class="btn btn--small btn--ghost" data-st="${s.id}:pending">Unpublish</button>`}<button class="btn btn--small btn--danger" data-del="${s.id}">Delete</button></div></td></tr>`)}</table></div>`,
     mount(root, reload) {
@@ -240,7 +240,7 @@ async function stories({ query }) {
         el.querySelector('[data-sf]').addEventListener('submit', async (e) => { e.preventDefault(); try { const body = readStory(e.target); if (s) await api(`/admin/stories/${s.id}`, { method: 'PATCH', body }); else await api('/admin/stories', { method: 'POST', body }); close(); toast('Story saved.'); reload(); } catch (x) { el.querySelector('[data-err]').innerHTML = String(errorsBox(x)); } });
       } });
       root.querySelector('[data-new]').addEventListener('click', () => open(null));
-      root.querySelector('[data-gen]')?.addEventListener('click', async (e) => { e.target.disabled = true; toast('Generating… this can take a minute.'); try { const j = await api('/admin/jobs', { method: 'POST', body: { type: 'story' } }); toast(j.status === 'succeeded' ? 'Story generated — it is waiting in the review queue.' : `Generation failed: ${j.error}`, j.status === 'succeeded' ? 'ok' : 'bad'); reload(); } catch (x) { toast(x.message, 'bad'); e.target.disabled = false; } });
+      root.querySelector('[data-gen]')?.addEventListener('click', async (e) => { e.target.disabled = true; toast('Generating… this can take a minute.'); try { const j = await api('/admin/jobs', { method: 'POST', body: { type: 'story' } }); toast(j.status === 'succeeded' ? (j.result?.offline ? `Added ${j.result.published} practice stories to the reading library.` : 'Story generated — it is waiting in the review queue.') : `Generation failed: ${j.error}`, j.status === 'succeeded' ? 'ok' : 'bad'); reload(); } catch (x) { toast(x.message, 'bad'); e.target.disabled = false; } });
       root.addEventListener('click', async (e) => {
         const ed = e.target.closest('[data-edit]'); const st = e.target.closest('[data-st]'); const d = e.target.closest('[data-del]');
         try {
@@ -318,7 +318,7 @@ async function settings() {
   const s = await api('/admin/settings');
   const num = (k, label, hint = '') => h`<label class="field"><span>${label}</span><input type="number" min="0" name="${k}" value="${s[k]}">${hint ? h`<small>${hint}</small>` : ''}</label>`;
   return {
-    html: h`<form data-set style="max-width:560px">${num('collection_word_limit', 'Maximum words per collection')}${num('daily_vocab_lists', 'AI vocabulary lists per day')}
+    html: h`<form data-set style="max-width:560px">${num('collection_word_limit', 'Maximum words per collection')}${num('daily_vocab_lists', 'New vocabulary lists per day (AI, or the offline dictionary)')}
       <div class="grid grid-2" style="gap:0 12px">${num('daily_videos_min', 'Videos per day (min)')}${num('daily_videos_max', 'Videos per day (max)')}${num('daily_stories_min', 'Stories per day (min)')}${num('daily_stories_max', 'Stories per day (max)')}</div>
       <div class="grid grid-2" style="gap:0 12px">${num('daily_grammar_min', 'Grammar lessons per day (min)')}${num('daily_grammar_max', 'Grammar lessons per day (max)')}${num('daily_topic_words_min', 'Daily Topic words (min)')}${num('daily_topic_words_max', 'Daily Topic words (max)')}</div>
       ${num('catchup_days', 'Days to catch up after downtime')}

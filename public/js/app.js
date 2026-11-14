@@ -1,5 +1,6 @@
 import { h, raw, api, state, applyPrefs, setNavigator, loadingView, errorsBox, win, toast, esc, langName } from './core.js';
 import { setScene } from './scene.js';
+import { startPronunciationHelpers } from './speech.js';
 import * as pub from './pages/public.js';
 import * as home from './pages/home.js';
 import * as vocab from './pages/vocab.js';
@@ -198,6 +199,7 @@ export async function refreshMe() {
 }
 
 (async function boot() {
+  startPronunciationHelpers({ notify: (msg) => toast(msg, 'info') });
   try {
     const [me, meta] = await Promise.all([api('/auth/me'), api('/meta')]);
     state.user = me.user; state.profile = me.profile || null; state.meta = meta;
