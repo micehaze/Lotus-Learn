@@ -329,6 +329,9 @@ export function createApp(overrides = {}, deps = {}) {
   const staticRoots = [{ prefix: '/shared/', dir: path.join(ROOT, 'shared') }, { prefix: '/', dir: path.join(ROOT, 'public') }];
   const indexHtml = path.join(ROOT, 'public', 'index.html');
 
+  // "null" (sandboxed frames, file:// pages) or garbage is not a valid origin and never matches.
+  const originHost = (origin) => { try { return new URL(origin).host; } catch { return null; } };
+
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
@@ -350,7 +353,7 @@ export function createApp(overrides = {}, deps = {}) {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         if (req.headers['x-requested-with'] !== 'lotus') throw forbidden('Missing request header');
         const origin = req.headers.origin;
-        if (origin && new URL(origin).host !== req.headers.host) throw forbidden('Cross-origin request blocked');
+        if (origin && originHost(origin) !== req.headers.host) throw forbidden('Cross-origin request blocked');
       }
       if (route.opts.rate) {
         const r = limiter.hit(`${route.opts.rate.name}:${ip}`, route.opts.rate.limit, route.opts.rate.windowMs);
