@@ -53,7 +53,7 @@ export function senseEntry(e, { canEnrich = false } = {}) {
     ${e.homonyms.length ? sec('Homonyms and homophones', e.homonyms.length, e.homonyms.map((m) => h`<div class="rel"><span>${ta(m.native, { lang })} <span class="chip">${m.kind}</span></span><span>${m.meaning}</span>${m.example ? h`<span class="ta" lang="${lang}">${m.example}</span><span class="small">${m.exampleEn}</span>` : ''}</div>`), true) : ''}
 
     ${['local-llm', 'indictrans2'].includes(e.origin) ? h`<p class="notice">AI-generated translation · unreviewed. Check the selected meaning before using it.</p>` : ''}${SOURCE_NOTE[e.origin] ? h`<p class="small muted">Source: ${SOURCE_NOTE[e.origin]}</p>` : ''}
-    ${canEnrich ? h`<p class="small muted">Source examples are preferred. AI fills missing examples and suggests collocations; generated items are labelled and may need correction.</p><button class="btn btn--small btn--ghost" type="button" data-complete>Find examples, collocations and other-language translations</button><div data-complete-status role="status" aria-live="polite"></div><div data-similar></div>` : ''}`;
+    ${canEnrich ? h`<p class="small muted">${state.meta?.features?.ai ? 'Source examples are preferred. AI fills missing examples and suggests collocations; generated items are labelled and may need correction.' : 'Fills examples, usage and other-language equivalents from the offline dictionary and Wikipedia sources.'}</p><button class="btn btn--small btn--ghost" type="button" data-complete>Find examples, collocations and other-language translations</button><div data-complete-status role="status" aria-live="polite"></div><div data-similar></div>` : ''}`;
 }
 
 export async function browse({ query, navigate }) {
@@ -138,7 +138,7 @@ export async function dictionary({ query, navigate }) {
     <div class="stack" style="max-width:960px;margin:0 auto">
       ${coverage ? win({ title: 'Dictionary coverage', body: h`<p class="small">${Object.entries(coverage.entries).map(([l,n]) => `${LNAME[l] || l}: ${Number(n).toLocaleString()} source entries`).join(' · ') || 'No imported dictionary data detected.'}</p>
         ${coverage.attestedForms?.[state.lang] ? h`<p class="small">${Number(coverage.attestedForms[state.lang]).toLocaleString()} ${L} word forms with Wikipedia excerpts.</p>` : ''}
-        <p class="small">${coverage.available ? 'Local dictionary connected.' : 'Local dictionary is unavailable. Start with START-LOTUS.cmd.'} ${coverage.ai ? `Local AI ready: ${coverage.model}.` : 'Start Ollama to generate examples.'}</p>` }) : ''}
+        <p class="small">${coverage.available ? 'Local dictionary connected.' : 'Local dictionary is unavailable. Start with START-LOTUS.cmd.'} ${coverage.ai ? `Local AI ready: ${coverage.model}.` : 'Works fully offline; no AI model needed.'}</p>` }) : ''}
       ${win({ title: 'Search', variant: 'salmon', corner: 'frangipani', body: h`<form data-dict class="filters" role="search" autocomplete="off">
         <label class="field" style="flex:3;position:relative"><span>Word or phrase</span><input type="search" name="q" value="${q}" placeholder="${direction === 'to_en' ? `${L} word or romanised spelling` : 'English word or phrase'}" aria-autocomplete="list" aria-controls="sugg">
           <ul id="sugg" class="win" role="listbox" hidden style="position:absolute;top:100%;left:0;right:0;z-index:5;list-style:none;margin:2px 0 0;padding:4px"></ul></label>

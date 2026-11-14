@@ -9,6 +9,8 @@ import { ServiceUnavailable } from '../integrations/index.js';
 import { PARTS_OF_SPEECH, REGISTERS, normKey } from './vocabulary.js';
 import { STORY_CATEGORIES, VIDEO_CATEGORIES } from './meta.js';
 import { assessDifficulty, MIN_STORY_SENTENCES } from './library.js';
+import { LIBRARY_TOPIC_WORDS } from './offlineTopicWords.js';
+import { phonetic } from '../../shared/phonetic.js';
 
 const sys = (lang) => `You are an expert ${LANGUAGES[lang].name} linguist and teacher writing learning material for English-speaking learners.
 Use natural, correct modern ${LANGUAGES[lang].name} in Unicode ${LANGUAGES[lang].name} script. Mark register honestly ("spoken" for colloquial forms, "formal" for written/standard).
@@ -51,7 +53,19 @@ function rowToVocabInput(r) {
   };
 }
 
-export function createContentService({ db, clock, config, meta, vocabulary, library, grammar, dailyTopics, dictionary, ai, youtube, events, logger = console }) {
+export function createContentService({ db, clock, config, meta, vocabulary, library, grammar, dailyTopics, dictionary, ai, youtube, events, providers, logger = console }) {
+  // Everything below works without a local model. When Ollama is configured it adds generated content on top.
+  const dictionaryReady = () => !!(providers?.configured?.() && providers.lookupEnglish);
+  const englishTerms = (t) => (String(t || '').toLowerCase().match(/[a-z]{3,}/g) || []);
+  const senseMatches = (english, gloss) => { const have = new Set(englishTerms(english)); return englishTerms(gloss).every((w) => have.has(w) || have.has(`${w}s`) || have.has(w.replace(/s$/, ''))); };
+  /** Best dictionary sense for an English word in `lang`, from sourced data only (Wiktionary, glossaries). */
+  async function sourcedNative(gloss, lang, { exclude = new Set() } = {}) {
+    let r;
+    try { r = await providers.lookupEnglish(gloss, lang, { lexiconOnly: true, disambiguate: false, timeout: 4000 }); } catch { return null; }
+    return (r?.candidates || []).find((c) => c && c.score >= 60 && typeof c.native === 'string' && typeof c.basis === 'string'
+      && /(?:definition|translation table|glossary|datuk|alar|olam|wikidata)/i.test(c.basis) && senseMatches(c.english, gloss)
+      && !validateNative(c.native, lang, { minRatio: 1 }).length && !exclude.has(c.native.normalize('NFC').trim())) || null;
+  }
   const now = () => clock.now().toISOString();
   const today = () => clock.now().toISOString().slice(0, 10);
   let running = false;
@@ -123,7 +137,12 @@ export function createContentService({ db, clock, config, meta, vocabulary, libr
       add('story', pickIn(s.daily_stories_min, s.daily_stories_max, `${date}:${lang}:stories`), (i) => ({ index: i, date }));
       add('grammar', pickIn(s.daily_grammar_min, s.daily_grammar_max, `${date}:${lang}:grammar`), (i) => ({ index: i, date }));
       add('vocabulary', s.daily_vocab_lists, () => ({ count: 12, date }));
-    } else skipped.push({ lang, type: 'story/grammar/vocabulary', reason: 'AI provider not configured' });
+    } else {
+      add('story', 1, () => ({ offline: true, date }));
+      if (dictionaryReady()) add('vocabulary', s.daily_vocab_lists, () => ({ count: 12, date, offline: true }));
+      else skipped.push({ lang, type: 'vocabulary', reason: 'Offline dictionary not running (START-LOTUS.cmd starts it)' });
+      skipped.push({ lang, type: 'grammar', reason: 'No local model: editors add grammar lessons in Admin → Grammar' });
+    }
     if (youtube.configured) add('video_discovery', 1, () => ({ count: pickIn(s.daily_videos_min, s.daily_videos_max, `${date}:${lang}:videos`), date }));
     else skipped.push({ lang, type: 'video_discovery', reason: 'YOUTUBE_API_KEY not configured' });
     return { plan, skipped };
@@ -238,6 +257,7 @@ export function createContentService({ db, clock, config, meta, vocabulary, libr
     } else target = leastCovered(lang);
     if (!target?.topic) throw bad('Unknown topic');
     const count = Math.min(20, Math.max(4, Number(payload.count) || 12));
+    if (!ai.configured) return offlineVocabulary(lang, target, count, job);
     const existing = vocabulary.published(lang).filter((v) => v.topicId === target.topic.id).map((v) => v.tamil).slice(0, 120);
     const levelText = target.level ? `at CEFR-style level ${target.level.code} (${target.level.name})` : 'across beginner to advanced levels (label each with its level)';
     const items = await ai.completeJSON({
@@ -284,8 +304,41 @@ Entries: ${JSON.stringify(items.map((x, i) => ({ index: i, native: x.native ?? x
     return { lang, topic: target.topic.name, level: target.level?.code || 'mixed', created: created.length, published, rejected, duplicates };
   }
 
+  /** No model: add dictionary-sourced words to a thin topic as a pending list for an editor to approve. */
+  async function offlineVocabulary(lang, target, count, job) {
+    if (!dictionaryReady()) throw new ServiceUnavailable('local-dictionary', 'New word lists without a local model come from the offline dictionary. Start it with START-LOTUS.cmd (or npm start).', 'not_configured');
+    const seeds = LIBRARY_TOPIC_WORDS[target.topic.name] || englishTerms(target.topic.name);
+    const known = new Set(db.all("SELECT tamil FROM vocabulary WHERE lang = ? AND status != 'rejected'", lang).map((r) => r.tamil.normalize('NFC').trim()));
+    const created = [], duplicates = [], rejected = [];
+    for (const gloss of seeds) {
+      if (created.length >= count) break;
+      const c = await sourcedNative(gloss, lang, { exclude: known });
+      if (!c) continue;
+      const native = c.native.normalize('NFC').trim();
+      const pos = PARTS_OF_SPEECH.includes(String(c.pos || '').toLowerCase()) ? String(c.pos).toLowerCase() : 'noun';
+      const input = { tamil: native, english: gloss, pronunciation: phonetic(native), part_of_speech: pos, level: target.level?.code || 'A1', topic_id: target.topic.id, register: 'common', definition: String(c.sense || '').slice(0, 300) };
+      if (db.get('SELECT id FROM vocabulary WHERE norm_key = ?', normKey(native, gloss, lang))) { duplicates.push(native); continue; }
+      try { created.push(vocabulary.create(input, { lang, status: 'pending', source: 'import', reviewStatus: 'ai-unreviewed', extraValidation: { origin: 'offline-dictionary', basis: c.basis, jobId: job.id } })); known.add(native); }
+      catch (e) { rejected.push({ native, problems: e.details?.problems || [e.message] }); }
+    }
+    if (created.length && job.job_type === 'vocabulary') {
+      const r = db.run('INSERT OR IGNORE INTO vocabulary_lists(lang, title, description, level, topic_id, status, source, idempotency_key, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        lang, `${target.topic.name}${target.level ? ` · ${target.level.code}` : ''}`, `Words from the offline dictionary (job ${job.id}) awaiting review`, target.level?.code || null, target.topic.id, 'pending', 'import', job.idempotency_key, now());
+      const listId = Number(r.lastInsertRowid) || db.get('SELECT id FROM vocabulary_lists WHERE idempotency_key = ?', job.idempotency_key)?.id;
+      created.forEach((vid, pos) => db.run('INSERT OR IGNORE INTO vocabulary_list_items(list_id, vocabulary_id, position) VALUES (?,?,?)', listId, vid, pos));
+    }
+    return { lang, topic: target.topic.name, level: target.level?.code || 'mixed', created: created.length, published: 0, rejected, duplicates, offline: true };
+  }
+
   async function genStory(payload) {
     const lang = payload.lang;
+    if (!ai.configured || payload.offline) {
+      // No model: a fresh batch of the built-in parallel practice stories, at most once a week per language.
+      const recent = db.get("SELECT id FROM stories WHERE lang = ? AND idempotency_key GLOB 'practice-story:*' AND created_at > ?", lang, addDays(today(), -6));
+      if (recent && payload.date) return { lang, offline: true, published: 0, note: 'A practice story batch was added in the last 7 days.' }; // scheduler only; editors can add more any time
+      const items = library.refreshStories(null, lang);
+      return { lang, offline: true, published: items.length, ids: items.map((x) => x.id) };
+    }
     const levels = meta.snapshot().levelsList.map((l) => l.code);
     const level = levels.includes(payload.level) ? payload.level : levels[seedFrom(`${lang}:${payload.date || today()}:${payload.index}`) % Math.min(4, levels.length)];
     const category = STORY_CATEGORIES.includes(payload.category) ? payload.category : STORY_CATEGORIES[seedFrom(`${lang}${payload.date || today()}c${payload.index}`) % 8];
@@ -310,6 +363,7 @@ Return JSON: {"title": "title in ${LANGUAGES[lang].name}", "title_en": "English 
     const have = grammar.titles(lang);
     const levels = ['A1', 'A2', 'B1', 'B2', 'C1'];
     const level = levels.includes(payload.level) ? payload.level : levels[seedFrom(`${lang}:${payload.date || today()}:g${payload.index}`) % levels.length];
+    if (!ai.configured) throw new ServiceUnavailable('ai', 'Grammar lessons are written by editors when no local model is configured (Admin → Grammar → Add lesson).', 'not_configured');
     const lesson = await ai.completeJSON({ system: sys(lang), maxTokens: 4000, prompt: `Write ONE new ${LANGUAGES[lang].name} grammar lesson for level ${level} that is not already covered by these lessons: ${have.join(' | ') || 'none'}.
 Choose a category slug from: ${cats.map((c) => `${c.slug} (${c.parent ? `${c.parent} › ` : ''}${c.name})`).join(', ')}.
 Describe the real structure of ${LANGUAGES[lang].name}; do not force English categories (e.g. it has postpositions/case suffixes, no articles).
@@ -429,6 +483,27 @@ Return {"senses": [...], "homonyms": [...]}.` });
   async function translateAssist({ tamil, native, english, lang = 'ta' }) {
     const word = native || tamil;
     if (!word || validateNative(word, lang).length) throw bad('Enter a valid word in the learning language first');
+    if (!ai.configured) {
+      // No model: fill what the offline dictionary actually records, plus the easy pronunciation spelling.
+      const suggestion = { pronunciation: phonetic(word) };
+      if (dictionaryReady() && providers.lookupNative) {
+        try {
+          const r = await providers.lookupNative(word, lang, { lexiconOnly: true, timeout: 4000 });
+          const gloss = (r?.entries || []).flatMap((e) => (e.senses || []).map((x) => x.gloss)).find(Boolean);
+          if (gloss) suggestion.english = String(gloss).slice(0, 200);
+        } catch { /* dictionary unavailable: pronunciation only */ }
+        const meaning = english || suggestion.english;
+        if (meaning && providers.equivalents) {
+          try {
+            const q = await providers.equivalents({ word, lang, gloss: meaning, targets: ['hi', 'ml'].filter((x) => x !== lang) });
+            const pick = (l) => (q?.equivalents?.[l] || []).find((x) => x?.native && !/IndicTrans2|Ollama/i.test(x.basis || ''))?.native;
+            if (pick('hi')) suggestion.hindi = pick('hi');
+            if (pick('ml')) suggestion.malayalam = pick('ml');
+          } catch { /* keep what we have */ }
+        }
+      }
+      return { unverified: false, provider: 'offline-dictionary', suggestion };
+    }
     const r = await ai.completeJSON({ system: sys(lang), maxTokens: 1200, prompt: `For the ${LANGUAGES[lang].name} word "${word}"${english ? ` (English: ${english})` : ''} return {"english": "", "hindi": "Devanagari", "pronunciation": "", "part_of_speech": "", "register": "", "collocations": [{"ta": "with [[target]]", "en": ""}], "examples": [{"ta": "with [[target]]", "en": ""}], "synonyms": [], "antonyms": []}` });
     return { unverified: true, provider: ai.provider, suggestion: r };
   }
@@ -436,6 +511,20 @@ Return {"senses": [...], "homonyms": [...]}.` });
     const query = String(q || '').trim().slice(0, 80);
     if (!query) throw bad('Enter a word to translate');
     const from = lang === 'hi' ? 'Hindi' : isLang(lang) ? LANGUAGES[lang].name : 'English';
+    if (!ai.configured) {
+      if (!dictionaryReady()) throw new ServiceUnavailable('local-dictionary', 'Start the offline dictionary (START-LOTUS.cmd) to look words up without a local model.', 'not_configured');
+      let found = [];
+      if (from === 'English') {
+        const r = await providers.lookupEnglish(query, dictLang, { lexiconOnly: true, disambiguate: false, timeout: 4000 }).catch(() => null);
+        found = (r?.candidates || []).filter((c) => c?.native && !validateNative(c.native, dictLang).length).slice(0, 3).map((c) => ({ native: c.native, english: c.english || query, note: c.basis || '' }));
+      } else {
+        const r = await providers.lookupNative(query, dictLang, { lexiconOnly: true, timeout: 4000 }).catch(() => null);
+        found = (r?.entries || []).slice(0, 3).map((e) => ({ native: e.word || e.native || query, english: (e.senses || []).map((x) => x.gloss).filter(Boolean).slice(0, 2).join('; '), note: e.source || '' }));
+      }
+      const items = found.filter((x) => x.native && !validateNative(x.native, dictLang).length).map((x) => ({ tamil: String(x.native).normalize('NFC'), native: String(x.native).normalize('NFC'),
+        transliteration: transliterateAny(x.native), english: String(x.english || query), register: '', note: String(x.note || '').slice(0, 200) }));
+      return { unverified: false, label: 'From the offline dictionary', items };
+    }
     const r = await ai.completeJSON({ system: sys(dictLang), maxTokens: 800, prompt: `Translate the ${from} word or phrase "${query}" into ${LANGUAGES[dictLang].name}. Return a JSON array (max 3) of {"native": "", "english": "", "register": "spoken|formal|common", "note": "usage note"}.` });
     const items = (Array.isArray(r) ? r : []).map((x) => ({ ...x, native: x.native || x.tamil })).filter((x) => x.native && !validateNative(x.native, dictLang).length).slice(0, 3)
       .map((x) => ({ tamil: String(x.native).normalize('NFC'), native: String(x.native).normalize('NFC'), transliteration: transliterateAny(x.native), english: String(x.english || query), register: x.register || '', note: String(x.note || '').slice(0, 200) }));

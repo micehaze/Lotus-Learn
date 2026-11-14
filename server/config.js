@@ -37,17 +37,19 @@ export function buildConfig(overrides = {}) {
     dailyTopicTarget: int(env.DAILY_TOPIC_TARGET, 30),
     dailyTopicBatchSize: int(env.DAILY_TOPIC_BATCH_SIZE, 5),
     dailyTopicSimilarityWindow: int(env.DAILY_TOPIC_SIMILARITY_WINDOW, 365),
+    // Optional. With no model set, Daily Topic builds its lists from the word library and the offline dictionary.
     dailyTopicAi: {
-      provider: 'ollama',
+      provider: env.DAILY_TOPIC_MODEL ? 'ollama' : 'none',
       ollamaUrl: env.OLLAMA_URL || 'http://127.0.0.1:11434',
-      ollamaModel: env.DAILY_TOPIC_MODEL || 'qwen3:4b',
+      ollamaModel: env.DAILY_TOPIC_MODEL || '',
       timeoutMs: int(env.DAILY_TOPIC_TIMEOUT_MS, 300000),
     },
     automationIntervalMinutes: int(env.AUTOMATION_INTERVAL_MINUTES, 30),
     testMode: bool(env.TEST_MODE, false),
     authRateLimit: int(env.AUTH_RATE_LIMIT, 20),
     ai: {
-      // local only: Ollama. Paid/cloud providers (OpenAI, Anthropic, Google, Azure) are not supported.
+      // Optional, local only: Ollama. Leave OLLAMA_MODEL empty and every feature runs from offline sources.
+      // Paid/cloud providers (OpenAI, Anthropic, Google, Azure) are not supported.
       provider: env.OLLAMA_MODEL ? 'ollama' : 'none',
       ollamaUrl: env.OLLAMA_URL || 'http://127.0.0.1:11434',
       ollamaModel: env.OLLAMA_MODEL || '',

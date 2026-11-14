@@ -6,7 +6,7 @@ Version 5 runs from the root of the `main` branch. The previous GitHub layout an
 
 ## Download and start
 
-Install [Node.js 22.13 or later](https://nodejs.org/en/download) and [Python 3.10 or later](https://www.python.org/downloads/) and add them to PATH. Install [Ollama](https://ollama.com/download) for AI features. Use [Code → Download ZIP](https://github.com/micehaze/Lotus-Learn/archive/refs/heads/main.zip) and extract it, or clone the project.
+Install [Node.js 22.13 or later](https://nodejs.org/en/download) and [Python 3.10 or later](https://www.python.org/downloads/) and add them to PATH. Nothing else is required: every feature works without an AI model. Use [Code → Download ZIP](https://github.com/micehaze/Lotus-Learn/archive/refs/heads/main.zip) and extract it, or clone the project.
 
 ```powershell
 git clone https://github.com/micehaze/Lotus-Learn.git
@@ -35,17 +35,32 @@ python tools/expand-dictionaries.py
 
 Download [lotuslearn-v5-tamil-telugu-indexes.zip](https://github.com/micehaze/Lotus-Learn/releases/download/v5-dictionary-coverage/lotuslearn-v5-tamil-telugu-indexes.zip). With the app stopped, extract `native-wiktionary.db` and `wikipedia-usage.db` into `local-dictionary/data/`. Restart the app and check **Dictionary → Dictionary coverage**. Wikipedia results include usage excerpts and source links. [Data sources and licenses](DATA-SOURCES.md)
 
-## Enable local AI and translation
+## Works without AI
 
-Start Ollama and download the models listed in `.env`. These downloads are needed once.
+No AI model is needed. With `OLLAMA_MODEL` and `DAILY_TOPIC_MODEL` left empty in `.env`:
+
+| Feature | Where the content comes from |
+|---|---|
+| Daily Topic | Words from the published word library and the offline dictionary (Wiktionary translation tables, glossaries), looked up with curated English words for each topic. Every entry has a source; offline lists hold 10–50 words. |
+| New vocabulary lists | Dictionary-sourced words for thin topics, added as pending lists for an editor to approve. |
+| Practice stories | Built-in parallel stories in all four languages, a new batch each week (or on demand in **Admin → Stories**). |
+| Grammar lessons | Written by editors in **Admin → Grammar**. |
+| Dictionary entries | Examples, usage and other-language equivalents from the offline dictionary and Wikipedia sources. |
+| Admin word form | **Fill from offline dictionary** fills the meaning, Hindi/Malayalam equivalents and an easy pronunciation spelling. |
+| Pronunciation | Easy English-letter spelling and a 🔊 listen button on every word, using the browser's built-in voices. |
+
+If a Daily Topic list falls short, **Admin → Daily Topics** shows why; you can retry it or type the entries yourself.
+
+## Optional: local AI
+
+Installing [Ollama](https://ollama.com/download) adds AI-generated stories and grammar lessons and richer word lists on top of the offline features. Download a model once, then set its name in `.env` and restart:
 
 ```powershell
-ollama pull gemma3:4b
-ollama pull qwen3:4b
-ollama list
+ollama pull gemma3:4b    # then OLLAMA_MODEL=gemma3:4b
+ollama pull qwen3:4b     # then DAILY_TOPIC_MODEL=qwen3:4b
 ```
 
-Restart Lotus Learn. `OLLAMA_MODEL` controls dictionary enrichment and other AI-assisted content. `DAILY_TOPIC_MODEL` controls the Daily Topic worker. It prepares one shared theme per date in the app timezone and publishes when all four language lists pass validation. If a list falls short, open **Admin → Daily Topics** to inspect the error, retry the list, or supply reviewed entries. Generation can take time on a CPU.
+With `DAILY_TOPIC_MODEL` set, the Daily Topic worker uses the model to propose words and applies the stricter 20–50 word rule with at least three collocations. Generation can take time on a CPU.
 
 For optional offline machine translation, install the dependencies and download IndicTrans2 into the app's model folders. Python 3.11 or 3.12 is recommended for this step.
 
@@ -87,7 +102,7 @@ Select the target language before adding content. Published items are visible to
 ## Troubleshooting and backups
 
 - If a port is busy, close the other Lotus Learn console or update `PORT`, `PUBLIC_URL`, and `LOCAL_DICT_URL` in `.env`. The example settings use website port `3005` and dictionary port `8766`.
-- If Daily Topic stays pending, verify the model with `ollama list` and check **Admin → Daily Topics** for list errors. The command `npm.cmd run daily-topic:generate -- --status` also reports worker status.
+- If Daily Topic stays pending, check **Admin → Daily Topics** for the reason. Without a model, lists need the offline dictionary: build it with the setup command above and keep the console open so the dictionary service runs. With a model set, verify it with `ollama list`. The command `npm.cmd run daily-topic:generate -- --status` also reports worker status.
 - Run `npm.cmd run backup` before upgrading. Accounts, progress, and manually published content live in `data/lotus.db`. Move your own database when you want to keep those records on a different installation.
 
 The browser UI lives in `public/`, the Node server and Admin API in `server/`, and the Python dictionary service in `local-dictionary/`. Run `npm.cmd run check` for source checks, `npm.cmd test` for Node tests, and `npm.cmd run dict:test` for dictionary tests.
