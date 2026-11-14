@@ -52,7 +52,12 @@ class Service:
 
     # ---------------------------------------------------------------- endpoints
     def health(self, _=None):
-        return {"ok": True, "lexicon": self.lexicon.stats(), "translator": self.translator.status(), "llm": self.llm.status(),
+        # Counting a large index on every poll is slow; refresh the counts at most once a minute.
+        import time
+        cached = getattr(self, "_stats_cache", None)
+        if not cached or time.monotonic() - cached[0] > 60:
+            cached = self._stats_cache = (time.monotonic(), self.lexicon.stats())
+        return {"ok": True, "lexicon": cached[1], "translator": self.translator.status(), "llm": self.llm.status(),
                 "attribution": ATTRIBUTION + [{"source": "AI4Bharat IndicTrans2", "license": "MIT", "url": "https://github.com/AI4Bharat/IndicTrans2"}],
                 "paid_apis": False}
 

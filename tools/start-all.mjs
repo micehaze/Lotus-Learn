@@ -44,9 +44,13 @@ if (enabled) {
   try { ready = (await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) })).ok; } catch { /* service not running */ }
   if (!ready) {
     run('dictionary', PY, ['-m', 'lotus_dict.server', '--port', port], path.join(ROOT, 'local-dictionary'));
-    for (let i = 0; i < 60 && !stopping; i++) {
-      try { if ((await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) })).ok) { ready = true; break; } } catch { /* starting */ }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    // The first start can be slow (large dictionary index, Python ML libraries, Windows network timeouts),
+    // so allow each health check 15 s and keep trying for up to 3 minutes.
+    console.log('Starting the offline dictionary…');
+    const deadline = Date.now() + 180_000;
+    while (!stopping && Date.now() < deadline) {
+      try { if ((await fetch(`${url}/health`, { signal: AbortSignal.timeout(15_000) })).ok) { ready = true; break; } } catch { /* starting */ }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
   if (!ready) { console.error('Dictionary could not start. Check Python and the error above.'); shutdown(1); }
