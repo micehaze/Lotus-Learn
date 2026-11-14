@@ -48,6 +48,18 @@ p { margin: 0 0 .8em; }
 .ta-lg { font-size: 1.5rem; }
 .tr { display: block; font-size: .85rem; color: var(--ink-soft); font-style: italic; letter-spacing: .01em; }
 body.hide-tr .tr { display: none; }
+/* Easy pronunciation spelling + listen button, added to every native-script text (public/js/speech.js) */
+.tr[title] { cursor: help; }
+p > .tr--easy, li > .tr--easy { display: inline; margin-left: .35em; }
+p > .tr--easy::before, li > .tr--easy::before { content: "("; }
+p > .tr--easy::after, li > .tr--easy::after { content: ")"; }
+.say { display: inline-flex; align-items: center; justify-content: center; width: 1.9em; height: 1.9em; margin: 2px 0 2px .3em; padding: 0;
+  border: 2px solid var(--ink-soft); border-radius: 50%; background: rgba(255,255,255,.75); font-size: .85rem; line-height: 1; cursor: pointer; vertical-align: middle; }
+.say:hover, .say:focus-visible { background: #fff; border-color: var(--ink); }
+.say--on { background: var(--ok); border-color: var(--ok); animation: say-pulse 1s ease-in-out infinite; }
+@keyframes say-pulse { 50% { transform: scale(1.12); } }
+body.motion-off .say--on, body.motion-reduced .say--on { animation: none; }
+.ta-xl + .tr + .say, .ta-xl + .say { font-size: 1.05rem; }
 .en { color: var(--ink-soft); }
 
 /* ------------------------------------------------------------ living scene (background) */
@@ -286,6 +298,7 @@ body.hide-en .reader .para-en:not(.show) { display: none; }
 .toast { padding: 10px 14px; background: var(--paper); border: 2px solid var(--line); box-shadow: var(--drop); font-family: var(--font-ui); animation: win-open 200ms steps(4); }
 .toast--ok { border-left: 8px solid var(--ok); }
 .toast--bad { border-left: 8px solid var(--bad); }
+.toast--info { border-left: 8px solid var(--ink-soft); max-width: 460px; }
 .empty { text-align: center; padding: 22px 12px; }
 .empty img { width: 64px; height: 64px; image-rendering: pixelated; }
 .loading { display: grid; place-items: center; gap: 8px; padding: 40px; font-family: var(--font-ui); color: #fff; text-shadow: 1px 1px 0 var(--line); }

@@ -29,7 +29,7 @@ const relRow = (r, lang) => h`<div class="rel"><span>${ta(r.native, { lang })}</
 /** Full sense-aware entry: primary translation & pronunciation first, details in collapsible sections. */
 export function senseEntry(e, { canEnrich = false } = {}) {
   const lang = e.lang;
-  return h`<div class="entry-head"><div>${ta(e.tamil, { size: 'xl', tr: false, lang })}<p style="margin:0"><em>${e.transliteration}</em>${e.pronunciation ? h` · say “${e.pronunciation}”` : ''}</p>
+  return h`<div class="entry-head"><div>${ta(e.tamil, { size: 'xl', lang })}<p class="small muted" style="margin:0">Scholarly: <em>${e.transliteration}</em>${e.pronunciation ? h` · say “${e.pronunciation}”` : ''}</p>
       <p style="margin:6px 0 0;font-size:1.25rem"><strong>${e.english}</strong>${e.altEnglish?.length ? h` <span class="muted">(${e.altEnglish.join(', ')})</span>` : ''}</p></div>
     <div class="row">${level(e.level)}<span class="chip">${posName(e.partOfSpeech)}</span><span class="chip chip--salmon">${regLabel(e.register)}</span>${e.topic ? h`<span class="chip chip--green">${e.topic}</span>` : ''}</div></div>
     ${e.nativeDefinitions?.length ? sec(`${LNAME[lang]} definitions`, e.nativeDefinitions.length, e.nativeDefinitions.map(d => h`<div class="rel">
